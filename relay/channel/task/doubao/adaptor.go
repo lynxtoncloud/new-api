@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -281,6 +282,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 				ImageURL: &MediaURL{
 					URL: imgURL,
 				},
+				Role: "user",
 			})
 		}
 	}
@@ -298,7 +300,15 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	r.Content = append(r.Content, ContentItem{
 		Type: "text",
 		Text: req.Prompt,
+		Role: "user",
 	})
+
+	// Ensure role is set for every content item (Volcengine/Doubao requires role for image contents).
+	for i := range r.Content {
+		if strings.TrimSpace(r.Content[i].Role) == "" {
+			r.Content[i].Role = "user"
+		}
+	}
 
 	return &r, nil
 }

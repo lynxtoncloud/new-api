@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -268,6 +267,22 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+// 火山方舟「视频生成任务」content 里 image_url 的 role 不是对话里的 user/assistant，
+// 而是素材语义。本适配器统一按多图参考上报 reference_image（不映射首尾帧）。
+const doubaoImageRoleReference = "reference_image"
+
+func normalizeDoubaoVideoContentRoles(content []ContentItem) {
+	for i := range content {
+		switch content[i].Type {
+		case "text":
+			// 文本块不允许带 role
+			content[i].Role = ""
+		case "image_url":
+			content[i].Role = doubaoImageRoleReference
+		}
+	}
+}
+
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
 		Model:   req.Model,
@@ -282,7 +297,6 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 				ImageURL: &MediaURL{
 					URL: imgURL,
 				},
-				Role: "user",
 			})
 		}
 	}
@@ -302,19 +316,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Text: req.Prompt,
 	})
 
-	// Ark/Doubao contents API: image_url entries must have role; text entries must NOT include role.
-	for i := range r.Content {
-		switch r.Content[i].Type {
-		case "text":
-			r.Content[i].Role = ""
-		case "image_url":
-			if strings.TrimSpace(r.Content[i].Role) == "" {
-				r.Content[i].Role = "user"
-			}
-		default:
-			// leave Role as-is for other multimodal types from metadata
-		}
-	}
+	normalizeDoubaoVideoContentRoles(r.Content)
 
 	return &r, nil
 }

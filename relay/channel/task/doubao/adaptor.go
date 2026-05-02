@@ -270,7 +270,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // 火山方舟「视频生成任务」content 里 image_url 的 role 不是对话里的 user/assistant，
-// 而是素材语义。reference_image 会走 task_type=r2v；部分模型（如 seedance 1.0 pro）不支持 r2v，
+// 而是素材语义。reference_image 会走 task_type=r2v；部分 Seedance Pro（1.0 / 1.5 等）不支持 r2v，
 // 仅支持 i2v（首帧/尾帧）。支持 r2v 的模型仍统一为多图参考 reference_image。
 const (
 	doubaoImageRoleFirstFrame = "first_frame"
@@ -281,7 +281,8 @@ const (
 // doubaoSeedanceModelDisallowsR2V 为 true 时，带图请求不能走 r2v（多 reference），须显式 i2v + 首尾帧语义。
 func doubaoSeedanceModelDisallowsR2V(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(m, "doubao-seedance-1-0-pro")
+	return strings.Contains(m, "doubao-seedance-1-0-pro") ||
+		strings.Contains(m, "doubao-seedance-1-5-pro")
 }
 
 func normalizeDoubaoVideoContentRoles(model string, content *[]ContentItem) {

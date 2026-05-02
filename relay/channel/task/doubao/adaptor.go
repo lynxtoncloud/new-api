@@ -300,13 +300,19 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	r.Content = append(r.Content, ContentItem{
 		Type: "text",
 		Text: req.Prompt,
-		Role: "user",
 	})
 
-	// Ensure role is set for every content item (Volcengine/Doubao requires role for image contents).
+	// Ark/Doubao contents API: image_url entries must have role; text entries must NOT include role.
 	for i := range r.Content {
-		if strings.TrimSpace(r.Content[i].Role) == "" {
-			r.Content[i].Role = "user"
+		switch r.Content[i].Type {
+		case "text":
+			r.Content[i].Role = ""
+		case "image_url":
+			if strings.TrimSpace(r.Content[i].Role) == "" {
+				r.Content[i].Role = "user"
+			}
+		default:
+			// leave Role as-is for other multimodal types from metadata
 		}
 	}
 

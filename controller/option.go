@@ -322,6 +322,14 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "ModelInputTypes":
+		if err = ratio_setting.UpdateModelInputTypesByJSONString(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "模型支持输入类型设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "ModelImg":
 		if err = ratio_setting.UpdateModelImgByJSONString(option.Value.(string)); err != nil {
 			c.JSON(http.StatusOK, gin.H{

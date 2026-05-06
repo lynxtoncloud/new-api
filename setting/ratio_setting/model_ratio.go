@@ -333,6 +333,7 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 var modelDisplayNameMap = types.NewRWMap[string, string]()
 var modelModalitiesMap = types.NewRWMap[string, string]()
+var modelInputTypesMap = types.NewRWMap[string, string]()
 var modelImgMap = types.NewRWMap[string, string]()
 
 var defaultCompletionRatio = map[string]float64{
@@ -727,6 +728,26 @@ func GetModelModalities(name string) string {
 		return modalities
 	}
 	return ""
+}
+
+func ModelInputTypes2JSONString() string {
+	return modelInputTypesMap.MarshalJSONString()
+}
+
+func UpdateModelInputTypesByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(modelInputTypesMap, jsonStr, InvalidateExposedDataCache)
+}
+
+func GetModelInputTypes(name string) string {
+	name = FormatMatchingModelName(name)
+	if s, ok := modelInputTypesMap.Get(name); ok {
+		return s
+	}
+	return ""
+}
+
+func GetModelInputTypesCopy() map[string]string {
+	return modelInputTypesMap.ReadAll()
 }
 
 func ModelImg2JSONString() string {

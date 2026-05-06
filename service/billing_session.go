@@ -119,10 +119,8 @@ func (s *BillingSession) Refund(c *gin.Context) {
 				common.SysLog("error refunding token quota: " + err.Error())
 			}
 		}
-		// 3) 退还用户已用额度（tokenConsumed已经是折扣后的值）
-		if tokenConsumed > 0 {
-			model.UpdateUserUsedQuotaAndRequestCount(s.relayInfo.UserId, -tokenConsumed)
-		}
+		// 提交阶段失败不会写消费日志，也不会增加 users.used_quota。
+		// 这里只回滚预扣的资金和令牌额度；异步任务已生成消费日志后的失败退款由 RefundTaskQuota 回退 used_quota。
 	})
 }
 

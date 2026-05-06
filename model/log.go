@@ -127,6 +127,7 @@ func attachCurrentBalanceSnapshot(log *Log) {
 		common.SysLog(fmt.Sprintf("failed to attach log balance snapshot for user %d: %v", log.UserId, err))
 		return
 	}
+	quota += pendingBatchUpdateValue(BatchUpdateTypeUserQuota, log.UserId)
 	log.Balance = quota
 	log.BalanceValid = true
 }

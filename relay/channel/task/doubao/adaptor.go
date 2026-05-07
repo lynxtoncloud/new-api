@@ -270,8 +270,8 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // 火山方舟「视频生成任务」content 里 image_url 的 role 不是对话里的 user/assistant，
-// 而是素材语义。reference_image 会走 task_type=r2v；部分 Seedance Pro（1.0 / 1.5 等）不支持 r2v，
-// 仅支持 i2v（首帧/尾帧）。支持 r2v 的模型仍统一为多图参考 reference_image。
+// 而是素材语义。reference_image 会走 r2v；部分 Seedance Pro（1.0 / 1.5 等）不支持 r2v，
+// 仅支持 i2v（首帧/尾帧）。支持 r2v 的模型：默认 reference_image；若 metadata.content 已带 role 则保留（首尾帧/参考等多形态由调用方与上游约定）。
 const (
 	doubaoImageRoleFirstFrame = "first_frame"
 	doubaoImageRoleLastFrame  = "last_frame"
@@ -320,7 +320,9 @@ func normalizeDoubaoVideoContentRoles(model string, content *[]ContentItem) {
 		case "text":
 			items[i].Role = ""
 		case "image_url":
-			items[i].Role = doubaoImageRoleReference
+			if strings.TrimSpace(items[i].Role) == "" {
+				items[i].Role = doubaoImageRoleReference
+			}
 		}
 	}
 }
@@ -347,6 +349,8 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+
+	normalizeDoubaoContentImageURLs(&r.Content)
 
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))

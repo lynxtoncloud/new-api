@@ -38,12 +38,22 @@ type BillingSession struct {
 // 资金来源和令牌额度分两步提交：若资金来源已提交但令牌调整失败，
 // 会标记 fundingSettled 防止 Refund 对已提交的资金来源执行退款。
 func (s *BillingSession) Settle(actualQuota int) error {
+	return s.settle(actualQuota, false)
+}
+
+// SettleDiscounted settles a quota value that already has the enterprise
+// discount applied by the caller.
+func (s *BillingSession) SettleDiscounted(actualQuota int) error {
+	return s.settle(actualQuota, true)
+}
+
+func (s *BillingSession) settle(actualQuota int, alreadyDiscounted bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settled {
 		return nil
 	}
-	if s.discountRate < 1.0 {
+	if !alreadyDiscounted && s.discountRate < 1.0 {
 		discountedActual := int(float64(actualQuota) * s.discountRate)
 		if discountedActual < 1 && actualQuota > 0 {
 			discountedActual = 1

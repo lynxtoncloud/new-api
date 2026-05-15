@@ -75,7 +75,7 @@ func logBalanceDelta(log *Log) int {
 	switch log.Type {
 	case LogTypeConsume:
 		return -log.Quota
-	case LogTypeRefund, LogTypeTopup:
+	case LogTypeRefund, LogTypeTopup, LogTypeManage:
 		return log.Quota
 	default:
 		return 0
@@ -320,7 +320,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
-			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
+			now := common.GetTimestamp()
+			tokenUsed := params.PromptTokens + params.CompletionTokens
+			LogQuotaData(userId, username, params.ModelName, params.Quota, now, tokenUsed)
+			LogMinuteQuotaData(userId, username, params.ModelName, params.Quota, now, tokenUsed)
 		})
 	}
 }

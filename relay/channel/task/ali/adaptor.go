@@ -35,21 +35,23 @@ type AliVideoRequest struct {
 
 // AliVideoInput 视频输入参数
 type AliVideoInput struct {
-	Prompt         string `json:"prompt,omitempty"`          // 文本提示词
-	ImgURL         string `json:"img_url,omitempty"`         // 首帧图像URL或Base64（图生视频）
-	FirstFrameURL  string `json:"first_frame_url,omitempty"` // 首帧图片URL（首尾帧生视频）
-	LastFrameURL   string `json:"last_frame_url,omitempty"`  // 尾帧图片URL（首尾帧生视频）
-	AudioURL       string `json:"audio_url,omitempty"`       // 音频URL（wan2.5支持）
-	NegativePrompt string `json:"negative_prompt,omitempty"` // 反向提示词
-	Template       string `json:"template,omitempty"`        // 视频特效模板
+	Prompt         string         `json:"prompt,omitempty"`          // 文本提示词
+	ImgURL         string         `json:"img_url,omitempty"`         // 首帧图像URL或Base64（万相图生视频）
+	FirstFrameURL  string         `json:"first_frame_url,omitempty"` // 首帧图片URL（首尾帧生视频）
+	LastFrameURL   string         `json:"last_frame_url,omitempty"`  // 尾帧图片URL（首尾帧生视频）
+	Media          []AliMediaItem `json:"media,omitempty"`           // HappyHorse 图生视频
+	AudioURL       string         `json:"audio_url,omitempty"`       // 音频URL（wan2.5支持）
+	NegativePrompt string         `json:"negative_prompt,omitempty"` // 反向提示词
+	Template       string         `json:"template,omitempty"`        // 视频特效模板
 }
 
 // AliVideoParameters 视频参数
 type AliVideoParameters struct {
 	Resolution   string `json:"resolution,omitempty"`    // 分辨率: 480P/720P/1080P（图生视频、首尾帧生视频）
-	Size         string `json:"size,omitempty"`          // 尺寸: 如 "832*480"（文生视频）
-	Duration     int    `json:"duration,omitempty"`      // 时长: 3-10秒
-	PromptExtend bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
+	Size         string `json:"size,omitempty"`          // 尺寸: 如 "832*480"（万相文生视频）
+	Ratio        string `json:"ratio,omitempty"`         // 宽高比（HappyHorse 文生视频: 16:9 等）
+	Duration     int    `json:"duration,omitempty"`      // 时长: 3-10秒（HappyHorse 3-15秒）
+	PromptExtend bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写（万相）
 	Watermark    bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（wan2.5）
 	Seed         int    `json:"seed,omitempty"`          // 随机数种子
@@ -97,6 +99,7 @@ type AliMetadata struct {
 	// Parameters 相关
 	Resolution   *string `json:"resolution,omitempty"`    // 分辨率: 480P/720P/1080P
 	Size         *string `json:"size,omitempty"`          // 尺寸: 如 "832*480"
+	Ratio        *string `json:"ratio,omitempty"`         // 宽高比（HappyHorse）
 	Duration     *int    `json:"duration,omitempty"`      // 时长
 	PromptExtend *bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
 	Watermark    *bool   `json:"watermark,omitempty"`     // 是否添加水印
@@ -249,6 +252,11 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 			otherRatios[fmt.Sprintf("resolution-%s", resolution)] = ratio
 		}
 	}
+	if hhRatios := happyHorseResolutionRatios(aliReq.Model, resolution); len(hhRatios) > 0 {
+		for k, v := range hhRatios {
+			otherRatios[k] = v
+		}
+	}
 	return otherRatios, nil
 }
 
@@ -257,6 +265,8 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	if info.IsModelMapped {
 		upstreamModel = info.UpstreamModelName
 	}
+	isHH := isHappyHorseModel(upstreamModel)
+
 	aliReq := &AliVideoRequest{
 		Model: upstreamModel,
 		Input: AliVideoInput{
@@ -264,49 +274,44 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 			ImgURL: req.InputReference,
 		},
 		Parameters: &AliVideoParameters{
-			PromptExtend: true, // 默认开启智能改写
-			Watermark:    false,
+			Watermark: false,
 		},
 	}
+	if !isHH {
+		aliReq.Parameters.PromptExtend = true // 万相默认开启智能改写
+	}
 
-	// 处理分辨率映射
+	// 处理分辨率 / 宽高比
 	if req.Size != "" {
-		// text to video size must be contained *
-		if strings.Contains(req.Model, "t2v") && !strings.Contains(req.Size, "*") {
+		if isHH {
+			if err := applyHappyHorseSizeParam(aliReq, req.Size); err != nil {
+				return nil, err
+			}
+		} else if strings.Contains(upstreamModel, "t2v") && !strings.Contains(req.Size, "*") {
 			return nil, fmt.Errorf("invalid size: %s, example: %s", req.Size, "1920*1080")
-		}
-		if strings.Contains(req.Size, "*") {
+		} else if strings.Contains(req.Size, "*") {
 			aliReq.Parameters.Size = req.Size
 		} else {
-			resolution := strings.ToUpper(req.Size)
-			// 支持 480p, 720p, 1080p 或 480P, 720P, 1080P
-			if !strings.HasSuffix(resolution, "P") {
-				resolution = resolution + "P"
-			}
-			aliReq.Parameters.Resolution = resolution
+			aliReq.Parameters.Resolution = normalizeResolutionP(req.Size)
+		}
+	} else if isHH {
+		applyHappyHorseDefaultVisuals(aliReq, upstreamModel)
+	} else if strings.Contains(upstreamModel, "t2v") {
+		if strings.HasPrefix(upstreamModel, "wan2.5") || strings.HasPrefix(upstreamModel, "wan2.2") {
+			aliReq.Parameters.Size = "1920*1080"
+		} else {
+			aliReq.Parameters.Size = "1280*720"
 		}
 	} else {
-		// 根据模型设置默认分辨率
-		if strings.Contains(req.Model, "t2v") { // image to video
-			if strings.HasPrefix(req.Model, "wan2.5") {
-				aliReq.Parameters.Size = "1920*1080"
-			} else if strings.HasPrefix(req.Model, "wan2.2") {
-				aliReq.Parameters.Size = "1920*1080"
-			} else {
-				aliReq.Parameters.Size = "1280*720"
-			}
-		} else {
-			if strings.HasPrefix(req.Model, "wan2.6") {
-				aliReq.Parameters.Resolution = "1080P"
-			} else if strings.HasPrefix(req.Model, "wan2.5") {
-				aliReq.Parameters.Resolution = "1080P"
-			} else if strings.HasPrefix(req.Model, "wan2.2-i2v-flash") {
-				aliReq.Parameters.Resolution = "720P"
-			} else if strings.HasPrefix(req.Model, "wan2.2-i2v-plus") {
-				aliReq.Parameters.Resolution = "1080P"
-			} else {
-				aliReq.Parameters.Resolution = "720P"
-			}
+		switch {
+		case strings.HasPrefix(upstreamModel, "wan2.6"), strings.HasPrefix(upstreamModel, "wan2.5"):
+			aliReq.Parameters.Resolution = "1080P"
+		case strings.HasPrefix(upstreamModel, "wan2.2-i2v-flash"):
+			aliReq.Parameters.Resolution = "720P"
+		case strings.HasPrefix(upstreamModel, "wan2.2-i2v-plus"):
+			aliReq.Parameters.Resolution = "1080P"
+		default:
+			aliReq.Parameters.Resolution = "720P"
 		}
 	}
 
@@ -317,23 +322,32 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		seconds, err := strconv.Atoi(req.Seconds)
 		if err != nil {
 			return nil, errors.Wrap(err, "convert seconds to int failed")
-		} else {
-			aliReq.Parameters.Duration = seconds
 		}
+		aliReq.Parameters.Duration = seconds
 	} else {
-		aliReq.Parameters.Duration = 5 // 默认5秒
+		aliReq.Parameters.Duration = 5
+	}
+	if isHH {
+		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
 	}
 
-	// 从 metadata 中提取额外参数
+	// 从 metadata 中提取额外参数（支持嵌套 parameters / 扁平字段）
 	if req.Metadata != nil {
 		if metadataBytes, err := common.Marshal(req.Metadata); err == nil {
-			err = common.Unmarshal(metadataBytes, aliReq)
-			if err != nil {
+			if err := common.Unmarshal(metadataBytes, aliReq); err != nil {
 				return nil, errors.Wrap(err, "unmarshal metadata failed")
 			}
 		} else {
 			return nil, errors.Wrap(err, "marshal metadata failed")
 		}
+		mergeFlatVideoMetadata(req.Metadata, aliReq)
+	}
+
+	applyHappyHorseInput(req, aliReq)
+
+	if isHH {
+		applyHappyHorseDefaultVisuals(aliReq, upstreamModel)
+		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
 	}
 
 	if aliReq.Model != upstreamModel {

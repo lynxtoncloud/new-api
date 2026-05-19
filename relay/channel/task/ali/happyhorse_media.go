@@ -142,10 +142,26 @@ func applyHappyHorseMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest
 	}
 }
 
+func mediaURLsFromAliInput(aliReq *AliVideoRequest) []string {
+	if aliReq == nil {
+		return nil
+	}
+	var urls []string
+	for _, item := range aliReq.Input.Media {
+		if u := strings.TrimSpace(item.URL); u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
 func applyHappyHorseI2VStyleMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest, variant string) error {
 	urls := collectImageURLs(req, aliReq)
 	if len(urls) == 0 {
-		return fmt.Errorf("happyhorse %s requires at least one image (images[], metadata.img_url, or content[].image_url)", variant)
+		urls = mediaURLsFromAliInput(aliReq)
+	}
+	if len(urls) == 0 {
+		return fmt.Errorf("happyhorse %s requires at least one image (images[], metadata.input.media, or content[].image_url)", variant)
 	}
 	aliReq.Input.Media = []AliMediaItem{{Type: "first_frame", URL: urls[0]}}
 	aliReq.Input.ImgURL = ""
@@ -162,6 +178,9 @@ func applyHappyHorseI2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) 
 
 func applyHappyHorseR2VMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
 	urls := collectImageURLs(req, aliReq)
+	if len(urls) == 0 {
+		urls = mediaURLsFromAliInput(aliReq)
+	}
 	if len(urls) == 0 {
 		return fmt.Errorf("happyhorse r2v requires 1-9 reference images")
 	}

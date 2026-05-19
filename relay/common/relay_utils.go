@@ -387,11 +387,25 @@ func validateHappyHorseTaskSubmitReq(req TaskSubmitReq) *dto.TaskError {
 		return nil
 	}
 	switch {
+	case strings.Contains(m, "t2v"):
+		if strings.TrimSpace(req.Prompt) == "" {
+			return createTaskError(fmt.Errorf("happyhorse t2v requires prompt"), "missing_prompt", http.StatusBadRequest, true)
+		}
 	case strings.Contains(m, "video-edit"):
+		if strings.TrimSpace(req.Prompt) == "" {
+			return createTaskError(fmt.Errorf("happyhorse video-edit requires prompt"), "missing_prompt", http.StatusBadRequest, true)
+		}
 		if collectHappyHorseVideoURL(req) == "" {
 			return createTaskError(fmt.Errorf("happyhorse video-edit requires reference_video_url"), "missing_video", http.StatusBadRequest, true)
 		}
-	case strings.Contains(m, "i2v"), strings.Contains(m, "r2v"):
+	case strings.Contains(m, "r2v"):
+		if strings.TrimSpace(req.Prompt) == "" {
+			return createTaskError(fmt.Errorf("happyhorse r2v requires prompt"), "missing_prompt", http.StatusBadRequest, true)
+		}
+		if len(req.Images) == 0 {
+			return createTaskError(fmt.Errorf("happyhorse %s requires at least one image in images[]", m), "missing_images", http.StatusBadRequest, true)
+		}
+	case strings.Contains(m, "i2v"):
 		if len(req.Images) == 0 {
 			return createTaskError(fmt.Errorf("happyhorse %s requires at least one image in images[]", m), "missing_images", http.StatusBadRequest, true)
 		}

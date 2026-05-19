@@ -353,6 +353,13 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		return nil, errors.New("can't change model with metadata")
 	}
 
+	// 尽早组装 input.media（finalize 会再次校验/覆盖）
+	if isHH {
+		if err := applyHappyHorseMedia(req, aliReq); err != nil {
+			return nil, err
+		}
+	}
+
 	return aliReq, nil
 }
 

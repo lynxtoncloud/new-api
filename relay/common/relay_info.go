@@ -801,6 +801,47 @@ func (t *TaskSubmitReq) appendImagesFromMetadata() {
 	if content, ok := t.Metadata["content"].([]interface{}); ok {
 		t.appendImagesFromContent(content)
 	}
+	if inputRaw, ok := t.Metadata["input"].(map[string]interface{}); ok {
+		appendImagesFromTaskMetadataInput(t, inputRaw)
+	}
+}
+
+func appendImagesFromTaskMetadataInput(t *TaskSubmitReq, input map[string]interface{}) {
+	if t == nil || input == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, img := range t.Images {
+		seen[img] = true
+	}
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		t.Images = append(t.Images, u)
+	}
+	if mediaRaw, ok := input["media"].([]interface{}); ok {
+		for _, item := range mediaRaw {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			typ, _ := m["type"].(string)
+			typ = strings.ToLower(strings.TrimSpace(typ))
+			if typ == "first_frame" || typ == "reference_image" || typ == "image" || typ == "video" {
+				if url, ok := m["url"].(string); ok {
+					add(url)
+				}
+			}
+		}
+	}
+	for _, key := range []string{"img_url", "first_frame_url", "image_url"} {
+		if url, ok := input[key].(string); ok {
+			add(url)
+		}
+	}
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {

@@ -143,9 +143,9 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	taskReq, err := relaycommon.ReloadTaskSubmitReq(c)
+	taskReq, err := relaycommon.LoadTaskSubmitReqForUpstream(c)
 	if err != nil {
-		return nil, errors.Wrap(err, "reload_task_request_failed")
+		return nil, errors.Wrap(err, "load_task_request_failed")
 	}
 
 	aliReq, err := a.convertToAliRequest(info, taskReq)
@@ -160,6 +160,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	bodyBytes, err := marshalAliVideoRequestBody(aliReq, taskReq)
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal_ali_request_failed")
+	}
+	if isHappyHorseTask(taskReq, aliReq.Model) {
+		logger.LogInfo(c, fmt.Sprintf("happyhorse upstream json: %s", string(bodyBytes)))
 	}
 	return bytes.NewReader(bodyBytes), nil
 }

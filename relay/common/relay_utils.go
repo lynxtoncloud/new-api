@@ -72,6 +72,71 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	return req, nil
 }
 
+// LoadTaskSubmitReqForUpstream 合并校验阶段存入 context 的请求与 body 重载结果，避免二次解析丢图。
+func LoadTaskSubmitReqForUpstream(c *gin.Context) (TaskSubmitReq, error) {
+	var stored TaskSubmitReq
+	hasStored := false
+	if req, err := GetTaskRequest(c); err == nil {
+		stored = req
+		hasStored = true
+	}
+	reloaded, err := ReloadTaskSubmitReq(c)
+	if err != nil {
+		if hasStored {
+			return stored, nil
+		}
+		return TaskSubmitReq{}, err
+	}
+	if !hasStored {
+		return reloaded, nil
+	}
+	return MergeTaskSubmitReq(stored, reloaded), nil
+}
+
+// MergeTaskSubmitReq 合并两次解析的任务请求，优先保留已有字段并补全 images/metadata。
+func MergeTaskSubmitReq(base, extra TaskSubmitReq) TaskSubmitReq {
+	out := base
+	if strings.TrimSpace(out.Model) == "" {
+		out.Model = extra.Model
+	}
+	if strings.TrimSpace(out.Prompt) == "" {
+		out.Prompt = extra.Prompt
+	}
+	if out.Duration == 0 {
+		out.Duration = extra.Duration
+	}
+	if strings.TrimSpace(out.InputReference) == "" {
+		out.InputReference = extra.InputReference
+	}
+	seen := map[string]bool{}
+	var images []string
+	addImg := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		images = append(images, u)
+	}
+	for _, u := range out.Images {
+		addImg(u)
+	}
+	for _, u := range extra.Images {
+		addImg(u)
+	}
+	out.Images = images
+	if out.Metadata == nil {
+		out.Metadata = map[string]interface{}{}
+	}
+	for k, v := range extra.Metadata {
+		if _, ok := out.Metadata[k]; !ok {
+			out.Metadata[k] = v
+		}
+	}
+	out.Normalize()
+	return out
+}
+
 // ReloadTaskSubmitReq 从 body 完整重载任务请求（含 images/content），供转发上游前使用。
 func ReloadTaskSubmitReq(c *gin.Context) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
@@ -217,6 +282,48 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	return nil
 }
 
+func appendImagesFromMetadataInput(req *TaskSubmitReq, meta map[string]interface{}) {
+	if req == nil || meta == nil {
+		return
+	}
+	inputRaw, ok := meta["input"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	seen := map[string]bool{}
+	for _, img := range req.Images {
+		seen[img] = true
+	}
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		req.Images = append(req.Images, u)
+	}
+	if mediaRaw, ok := inputRaw["media"].([]interface{}); ok {
+		for _, item := range mediaRaw {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			typ, _ := m["type"].(string)
+			typ = strings.ToLower(strings.TrimSpace(typ))
+			if typ == "first_frame" || typ == "reference_image" || typ == "image" {
+				if url, ok := m["url"].(string); ok {
+					add(url)
+				}
+			}
+		}
+	}
+	for _, key := range []string{"img_url", "first_frame_url", "image_url"} {
+		if url, ok := inputRaw[key].(string); ok {
+			add(url)
+		}
+	}
+}
+
 func mergeTaskImagesFromRawJSON(req *TaskSubmitReq, raw []byte) {
 	if req == nil || len(raw) == 0 {
 		return
@@ -260,6 +367,7 @@ func mergeTaskImagesFromRawJSON(req *TaskSubmitReq, raw []byte) {
 					}
 				}
 			}
+			appendImagesFromMetadataInput(req, meta)
 		}
 	}
 	if len(probe.Content) > 0 {

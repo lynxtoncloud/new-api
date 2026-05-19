@@ -123,43 +123,15 @@ func applyHappyHorseDefaultVisuals(aliReq *AliVideoRequest, model string) {
 	}
 }
 
-func collectImageURLs(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) []string {
-	seen := map[string]bool{}
-	var urls []string
-	add := func(u string) {
-		u = strings.TrimSpace(u)
-		if u == "" || seen[u] {
-			return
-		}
-		seen[u] = true
-		urls = append(urls, u)
-	}
-	for _, img := range req.Images {
-		add(img)
-	}
-	add(req.InputReference)
-	add(req.Image)
-	add(aliReq.Input.ImgURL)
-	add(aliReq.Input.FirstFrameURL)
-	if req.Metadata != nil {
-		if v, ok := req.Metadata["img_url"].(string); ok {
-			add(v)
-		}
-		if v, ok := req.Metadata["first_frame_url"].(string); ok {
-			add(v)
-		}
-		if raw, ok := req.Metadata["reference_images"].([]interface{}); ok {
-			for _, item := range raw {
-				if s, ok := item.(string); ok {
-					add(s)
-				}
-			}
-		}
-	}
-	return urls
-}
-
 func collectVideoURL(req relaycommon.TaskSubmitReq) string {
+	if u := strings.TrimSpace(req.ReferenceVideoURL); u != "" {
+		return u
+	}
+	if len(req.ReferenceVideoURLs) > 0 {
+		if u := strings.TrimSpace(req.ReferenceVideoURLs[0]); u != "" {
+			return u
+		}
+	}
 	if req.Metadata != nil {
 		if v, ok := req.Metadata["reference_video_url"].(string); ok && strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
@@ -176,81 +148,6 @@ func collectVideoURL(req relaycommon.TaskSubmitReq) string {
 func isPublicHTTPURL(u string) bool {
 	lower := strings.ToLower(strings.TrimSpace(u))
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
-}
-
-// applyHappyHorseMedia 按官方 API 组装 input.media（t2v 无需 media）。
-func applyHappyHorseMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
-	if !isHappyHorseModel(aliReq.Model) {
-		return nil
-	}
-	lower := strings.ToLower(aliReq.Model)
-	switch {
-	case strings.Contains(lower, "video-edit"):
-		return applyHappyHorseVideoEdit(req, aliReq)
-	case strings.Contains(lower, "r2v"):
-		return applyHappyHorseR2V(req, aliReq)
-	case strings.Contains(lower, "i2v"):
-		return applyHappyHorseI2V(req, aliReq)
-	default:
-		// t2v：仅需 prompt + parameters
-		return nil
-	}
-}
-
-func applyHappyHorseI2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
-	urls := collectImageURLs(req, aliReq)
-	if len(urls) == 0 {
-		return fmt.Errorf("happyhorse i2v requires one first-frame image (images[] or metadata.img_url)")
-	}
-	aliReq.Input.Media = []AliMediaItem{{Type: "first_frame", URL: urls[0]}}
-	aliReq.Input.ImgURL = ""
-	aliReq.Input.FirstFrameURL = ""
-	return nil
-}
-
-func applyHappyHorseR2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
-	urls := collectImageURLs(req, aliReq)
-	if len(urls) == 0 {
-		return fmt.Errorf("happyhorse r2v requires 1-9 reference images in images[]")
-	}
-	if len(urls) > 9 {
-		urls = urls[:9]
-	}
-	media := make([]AliMediaItem, 0, len(urls))
-	for _, u := range urls {
-		media = append(media, AliMediaItem{Type: "reference_image", URL: u})
-	}
-	aliReq.Input.Media = media
-	aliReq.Input.ImgURL = ""
-	aliReq.Input.FirstFrameURL = ""
-	return nil
-}
-
-func applyHappyHorseVideoEdit(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
-	videoURL := collectVideoURL(req)
-	if videoURL == "" {
-		return fmt.Errorf("happyhorse video-edit requires metadata.reference_video_url (public HTTP/HTTPS video URL)")
-	}
-	if !isPublicHTTPURL(videoURL) {
-		return fmt.Errorf("happyhorse video-edit requires a public HTTP(S) video URL; data URLs or local files are not supported by upstream")
-	}
-	media := []AliMediaItem{{Type: "video", URL: videoURL}}
-	refImages := collectImageURLs(req, aliReq)
-	if len(refImages) > 5 {
-		refImages = refImages[:5]
-	}
-	for _, u := range refImages {
-		media = append(media, AliMediaItem{Type: "reference_image", URL: u})
-	}
-	aliReq.Input.Media = media
-	aliReq.Input.ImgURL = ""
-	aliReq.Input.FirstFrameURL = ""
-	// 视频编辑时长与输入对齐，不传 duration
-	aliReq.Parameters.Duration = 0
-	if aliReq.Parameters.AudioSetting == "" {
-		aliReq.Parameters.AudioSetting = "auto"
-	}
-	return nil
 }
 
 func happyHorseResolutionRatios(model, resolution string) map[string]float64 {

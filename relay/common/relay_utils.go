@@ -140,6 +140,7 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	if req.InputReference != "" {
 		req.Images = []string{req.InputReference}
 	}
+	req.Normalize()
 
 	if strings.TrimSpace(req.Model) == "" {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
@@ -218,6 +219,7 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		// 兼容单图上传
 		req.Images = []string{req.Image}
 	}
+	req.Normalize()
 
 	storeTaskRequest(c, info, action, req)
 	return nil

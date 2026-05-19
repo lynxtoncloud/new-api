@@ -266,7 +266,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	if info.IsModelMapped {
 		upstreamModel = info.UpstreamModelName
 	}
-	isHH := isHappyHorseModel(upstreamModel)
+	isHH := isHappyHorseTask(req, upstreamModel)
 
 	aliReq := &AliVideoRequest{
 		Model: upstreamModel,
@@ -332,16 +332,11 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
 	}
 
-	// 从 metadata 中提取额外参数（支持嵌套 parameters / 扁平字段）
+	// 从 metadata 合并 parameters / 扁平字段（勿整包 Unmarshal 到 aliReq，避免覆盖 input.media）
 	if req.Metadata != nil {
-		if metadataBytes, err := common.Marshal(req.Metadata); err == nil {
-			if err := common.Unmarshal(metadataBytes, aliReq); err != nil {
-				return nil, errors.Wrap(err, "unmarshal metadata failed")
-			}
-		} else {
-			return nil, errors.Wrap(err, "marshal metadata failed")
+		if err := mergeAliVideoMetadata(req.Metadata, aliReq); err != nil {
+			return nil, errors.Wrap(err, "merge metadata failed")
 		}
-		mergeFlatVideoMetadata(req.Metadata, aliReq)
 	}
 
 	if isHH {

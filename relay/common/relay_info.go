@@ -668,16 +668,21 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt              string                 `json:"prompt"`
+	Model               string                 `json:"model,omitempty"`
+	Mode                string                 `json:"mode,omitempty"`
+	Image               string                 `json:"image,omitempty"`
+	Images              []string               `json:"images,omitempty"`
+	Size                string                 `json:"size,omitempty"`
+	Duration            int                    `json:"duration,omitempty"`
+	Seconds             string                 `json:"seconds,omitempty"`
+	InputReference      string                 `json:"input_reference,omitempty"`
+	Resolution          string                 `json:"resolution,omitempty"`
+	Ratio               string                 `json:"ratio,omitempty"`
+	ReferenceVideoURL   string                 `json:"reference_video_url,omitempty"`
+	ReferenceVideoURLs  []string               `json:"reference_video_urls,omitempty"`
+	Content             json.RawMessage        `json:"content,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -686,6 +691,116 @@ func (t *TaskSubmitReq) GetPrompt() string {
 
 func (t *TaskSubmitReq) HasImage() bool {
 	return len(t.Images) > 0
+}
+
+// Normalize 合并顶层扩展字段到 metadata，并从 content / metadata 提取图片 URL 到 Images。
+func (t *TaskSubmitReq) Normalize() {
+	if t.Metadata == nil {
+		t.Metadata = make(map[string]interface{})
+	}
+	if strings.TrimSpace(t.Resolution) != "" {
+		t.Metadata["resolution"] = strings.TrimSpace(t.Resolution)
+	}
+	if strings.TrimSpace(t.Ratio) != "" {
+		t.Metadata["ratio"] = strings.TrimSpace(t.Ratio)
+	}
+	if strings.TrimSpace(t.ReferenceVideoURL) != "" {
+		t.Metadata["reference_video_url"] = strings.TrimSpace(t.ReferenceVideoURL)
+	}
+	if len(t.ReferenceVideoURLs) > 0 {
+		urls := make([]interface{}, 0, len(t.ReferenceVideoURLs))
+		for _, u := range t.ReferenceVideoURLs {
+			if strings.TrimSpace(u) != "" {
+				urls = append(urls, strings.TrimSpace(u))
+			}
+		}
+		if len(urls) > 0 {
+			t.Metadata["reference_video_urls"] = urls
+		}
+	}
+	if len(t.Content) > 0 {
+		var content []interface{}
+		if err := common.Unmarshal(t.Content, &content); err == nil && len(content) > 0 {
+			t.Metadata["content"] = content
+			t.appendImagesFromContent(content)
+		}
+	}
+	t.appendImagesFromMetadata()
+	if len(t.Images) == 0 && strings.TrimSpace(t.Image) != "" {
+		t.Images = []string{strings.TrimSpace(t.Image)}
+	}
+}
+
+func (t *TaskSubmitReq) appendImagesFromContent(content []interface{}) {
+	seen := map[string]bool{}
+	for _, img := range t.Images {
+		seen[img] = true
+	}
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		t.Images = append(t.Images, u)
+	}
+	for _, item := range content {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ, _ := m["type"].(string)
+		switch strings.ToLower(strings.TrimSpace(typ)) {
+		case "image_url", "image":
+			if imageURL, ok := m["image_url"].(map[string]interface{}); ok {
+				if url, ok := imageURL["url"].(string); ok {
+					add(url)
+				}
+			}
+			if url, ok := m["url"].(string); ok {
+				add(url)
+			}
+		case "input_image":
+			if image, ok := m["image"].(string); ok {
+				add(image)
+			}
+		}
+	}
+}
+
+func (t *TaskSubmitReq) appendImagesFromMetadata() {
+	if t.Metadata == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, img := range t.Images {
+		seen[img] = true
+	}
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		t.Images = append(t.Images, u)
+	}
+	for _, key := range []string{"img_url", "first_frame_url", "image_url"} {
+		if v, ok := t.Metadata[key].(string); ok {
+			add(v)
+		}
+	}
+	for _, key := range []string{"images", "reference_images"} {
+		if raw, ok := t.Metadata[key].([]interface{}); ok {
+			for _, item := range raw {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+	}
+	if content, ok := t.Metadata["content"].([]interface{}); ok {
+		t.appendImagesFromContent(content)
+	}
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
@@ -732,6 +847,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	t.Normalize()
 	return nil
 }
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {

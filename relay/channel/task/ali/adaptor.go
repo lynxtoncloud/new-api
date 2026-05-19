@@ -54,6 +54,7 @@ type AliVideoParameters struct {
 	PromptExtend bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写（万相）
 	Watermark    bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（wan2.5）
+	AudioSetting string `json:"audio_setting,omitempty"` // HappyHorse 视频编辑：auto / origin
 	Seed         int    `json:"seed,omitempty"`          // 随机数种子
 }
 
@@ -327,7 +328,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	} else {
 		aliReq.Parameters.Duration = 5
 	}
-	if isHH {
+	if isHH && !strings.Contains(strings.ToLower(upstreamModel), "video-edit") {
 		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
 	}
 
@@ -343,11 +344,14 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		mergeFlatVideoMetadata(req.Metadata, aliReq)
 	}
 
-	applyHappyHorseInput(req, aliReq)
-
 	if isHH {
+		if err := applyHappyHorseMedia(req, aliReq); err != nil {
+			return nil, err
+		}
 		applyHappyHorseDefaultVisuals(aliReq, upstreamModel)
-		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
+		if !strings.Contains(strings.ToLower(upstreamModel), "video-edit") {
+			aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
+		}
 	}
 
 	if aliReq.Model != upstreamModel {

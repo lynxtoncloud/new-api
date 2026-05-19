@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -67,6 +68,27 @@ func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	req, ok := v.(TaskSubmitReq)
 	if !ok {
 		return TaskSubmitReq{}, fmt.Errorf("invalid task request type")
+	}
+	return req, nil
+}
+
+// ReloadTaskSubmitReq 从 body 完整重载任务请求（含 images/content），供转发上游前使用。
+func ReloadTaskSubmitReq(c *gin.Context) (TaskSubmitReq, error) {
+	var req TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return req, err
+	}
+	if req.InputReference != "" && len(req.Images) == 0 {
+		req.Images = []string{req.InputReference}
+	}
+	req.Normalize()
+	if strings.Contains(strings.ToLower(req.Model), "happyhorse") {
+		if storage, err := common.GetBodyStorage(c); err == nil && storage != nil {
+			if raw, err := storage.Bytes(); err == nil && len(raw) > 0 {
+				mergeTaskImagesFromRawJSON(&req, raw)
+			}
+		}
+		req.Normalize()
 	}
 	return req, nil
 }
@@ -146,6 +168,19 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 	}
 
+	// 欢乐马：从原始 body 再补全 images，并在入队前校验
+	if strings.Contains(strings.ToLower(req.Model), "happyhorse") {
+		if storage, err := common.GetBodyStorage(c); err == nil && storage != nil {
+			if raw, err := storage.Bytes(); err == nil && len(raw) > 0 {
+				mergeTaskImagesFromRawJSON(&req, raw)
+			}
+		}
+		req.Normalize()
+		if taskErr := validateHappyHorseTaskSubmitReq(req); taskErr != nil {
+			return taskErr
+		}
+	}
+
 	if req.HasImage() {
 		hasInputReference = true
 	}
@@ -180,6 +215,97 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	storeTaskRequest(c, info, action, req)
 
 	return nil
+}
+
+func mergeTaskImagesFromRawJSON(req *TaskSubmitReq, raw []byte) {
+	if req == nil || len(raw) == 0 {
+		return
+	}
+	var probe struct {
+		Images         []string        `json:"images"`
+		Image          string          `json:"image"`
+		InputReference string          `json:"input_reference"`
+		Metadata       json.RawMessage `json:"metadata"`
+		Content        json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, u := range req.Images {
+		seen[u] = true
+	}
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		req.Images = append(req.Images, u)
+	}
+	for _, u := range probe.Images {
+		add(u)
+	}
+	add(probe.Image)
+	add(probe.InputReference)
+	if len(probe.Metadata) > 0 {
+		var meta map[string]interface{}
+		if json.Unmarshal(probe.Metadata, &meta) == nil {
+			if req.Metadata == nil {
+				req.Metadata = meta
+			} else {
+				for k, v := range meta {
+					if _, ok := req.Metadata[k]; !ok {
+						req.Metadata[k] = v
+					}
+				}
+			}
+		}
+	}
+	if len(probe.Content) > 0 {
+		var content []interface{}
+		if json.Unmarshal(probe.Content, &content) == nil {
+			if req.Metadata == nil {
+				req.Metadata = map[string]interface{}{}
+			}
+			req.Metadata["content"] = content
+		}
+	}
+}
+
+func validateHappyHorseTaskSubmitReq(req TaskSubmitReq) *dto.TaskError {
+	m := strings.ToLower(strings.TrimSpace(req.Model))
+	if !strings.Contains(m, "happyhorse") {
+		return nil
+	}
+	switch {
+	case strings.Contains(m, "video-edit"):
+		if collectHappyHorseVideoURL(req) == "" {
+			return createTaskError(fmt.Errorf("happyhorse video-edit requires reference_video_url"), "missing_video", http.StatusBadRequest, true)
+		}
+	case strings.Contains(m, "i2v"), strings.Contains(m, "r2v"):
+		if len(req.Images) == 0 {
+			return createTaskError(fmt.Errorf("happyhorse %s requires at least one image in images[]", m), "missing_images", http.StatusBadRequest, true)
+		}
+	}
+	return nil
+}
+
+func collectHappyHorseVideoURL(req TaskSubmitReq) string {
+	if u := strings.TrimSpace(req.ReferenceVideoURL); u != "" {
+		return u
+	}
+	if len(req.ReferenceVideoURLs) > 0 {
+		if u := strings.TrimSpace(req.ReferenceVideoURLs[0]); u != "" {
+			return u
+		}
+	}
+	if req.Metadata != nil {
+		if v, ok := req.Metadata["reference_video_url"].(string); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func isKnownTaskField(field string) bool {
@@ -220,6 +346,17 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		req.Images = []string{req.Image}
 	}
 	req.Normalize()
+	if strings.Contains(strings.ToLower(req.Model), "happyhorse") {
+		if storage, err := common.GetBodyStorage(c); err == nil && storage != nil {
+			if raw, err := storage.Bytes(); err == nil && len(raw) > 0 {
+				mergeTaskImagesFromRawJSON(&req, raw)
+			}
+		}
+		req.Normalize()
+		if taskErr := validateHappyHorseTaskSubmitReq(req); taskErr != nil {
+			return taskErr
+		}
+	}
 
 	storeTaskRequest(c, info, action, req)
 	return nil

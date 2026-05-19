@@ -39,7 +39,7 @@ type AliVideoInput struct {
 	ImgURL         string         `json:"img_url,omitempty"`         // 首帧图像URL或Base64（万相图生视频）
 	FirstFrameURL  string         `json:"first_frame_url,omitempty"` // 首帧图片URL（首尾帧生视频）
 	LastFrameURL   string         `json:"last_frame_url,omitempty"`  // 尾帧图片URL（首尾帧生视频）
-	Media          []AliMediaItem `json:"media,omitempty"`           // HappyHorse 图生视频
+	Media          []AliMediaItem `json:"media,omitempty"`           // HappyHorse 由专用序列化保证 media 字段
 	AudioURL       string         `json:"audio_url,omitempty"`       // 音频URL（wan2.5支持）
 	NegativePrompt string         `json:"negative_prompt,omitempty"` // 反向提示词
 	Template       string         `json:"template,omitempty"`        // 视频特效模板
@@ -143,18 +143,21 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	taskReq, err := relaycommon.GetTaskRequest(c)
+	taskReq, err := relaycommon.ReloadTaskSubmitReq(c)
 	if err != nil {
-		return nil, errors.Wrap(err, "get_task_request_failed")
+		return nil, errors.Wrap(err, "reload_task_request_failed")
 	}
 
 	aliReq, err := a.convertToAliRequest(info, taskReq)
 	if err != nil {
 		return nil, errors.Wrap(err, "convert_to_ali_request_failed")
 	}
+	if err := finalizeHappyHorseAliRequest(taskReq, aliReq); err != nil {
+		return nil, errors.Wrap(err, "finalize_happyhorse_request_failed")
+	}
 	logger.LogJson(c, "ali video request body", aliReq)
 
-	bodyBytes, err := common.Marshal(aliReq)
+	bodyBytes, err := marshalAliVideoRequestBody(aliReq, taskReq)
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal_ali_request_failed")
 	}
@@ -296,6 +299,10 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 			aliReq.Parameters.Resolution = normalizeResolutionP(req.Size)
 		}
 	} else if isHH {
+		if strings.TrimSpace(req.Resolution) != "" {
+			aliReq.Parameters.Resolution = normalizeResolutionP(req.Resolution)
+			aliReq.Parameters.Size = ""
+		}
 		applyHappyHorseDefaultVisuals(aliReq, upstreamModel)
 	} else if strings.Contains(upstreamModel, "t2v") {
 		if strings.HasPrefix(upstreamModel, "wan2.5") || strings.HasPrefix(upstreamModel, "wan2.2") {
@@ -339,17 +346,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		}
 	}
 
-	if isHH {
-		if err := applyHappyHorseMedia(req, aliReq); err != nil {
-			return nil, err
-		}
-		applyHappyHorseDefaultVisuals(aliReq, upstreamModel)
-		if !strings.Contains(strings.ToLower(upstreamModel), "video-edit") {
-			aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
-		}
-	}
-
-	if aliReq.Model != upstreamModel {
+	if !isHH && aliReq.Model != upstreamModel {
 		return nil, errors.New("can't change model with metadata")
 	}
 

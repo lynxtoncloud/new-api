@@ -263,13 +263,13 @@ func marshalAliVideoRequestBody(aliReq *AliVideoRequest, req relaycommon.TaskSub
 			"media":  aliReq.Input.Media,
 		},
 	}
-	if params := happyHorseParametersMap(aliReq); len(params) > 0 {
+	if params := happyHorseParametersMap(aliReq, req); len(params) > 0 {
 		payload["parameters"] = params
 	}
 	return json.Marshal(payload)
 }
 
-func happyHorseParametersMap(aliReq *AliVideoRequest) map[string]interface{} {
+func happyHorseParametersMap(aliReq *AliVideoRequest, req relaycommon.TaskSubmitReq) map[string]interface{} {
 	if aliReq.Parameters == nil {
 		return nil
 	}
@@ -278,7 +278,8 @@ func happyHorseParametersMap(aliReq *AliVideoRequest) map[string]interface{} {
 	if p.Resolution != "" {
 		out["resolution"] = p.Resolution
 	}
-	if p.Ratio != "" {
+	// 官方：图生视频不支持 ratio，带上可能导致上游参数异常
+	if p.Ratio != "" && !strings.Contains(strings.ToLower(happyHorseVariantFromModels(req, aliReq.Model)), "i2v") {
 		out["ratio"] = p.Ratio
 	}
 	if p.Duration > 0 {
@@ -296,7 +297,7 @@ func happyHorseParametersMap(aliReq *AliVideoRequest) map[string]interface{} {
 	return out
 }
 
-func mergeAliVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequest) error {
+func mergeAliVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequest, clientModel string) error {
 	if metadata == nil {
 		return nil
 	}
@@ -328,7 +329,7 @@ func mergeAliVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequ
 			aliReq.Input.Media = input.Media
 		}
 	}
-	mergeFlatVideoMetadata(metadata, aliReq)
+	mergeFlatVideoMetadata(metadata, aliReq, clientModel)
 	return nil
 }
 

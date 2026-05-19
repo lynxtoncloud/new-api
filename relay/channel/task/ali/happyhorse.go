@@ -31,7 +31,7 @@ func normalizeResolutionP(res string) string {
 	return r
 }
 
-func mergeFlatVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequest) {
+func mergeFlatVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequest, clientModel string) {
 	if metadata == nil || aliReq.Parameters == nil {
 		return
 	}
@@ -40,7 +40,10 @@ func mergeFlatVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoReq
 		aliReq.Parameters.Size = ""
 	}
 	if ratio := metadataString(metadata, "ratio", "aspect_ratio", "aspectRatio"); ratio != "" {
-		aliReq.Parameters.Ratio = ratio
+		if !strings.Contains(strings.ToLower(clientModel), "happyhorse-1.0-i2v") &&
+			!strings.Contains(strings.ToLower(clientModel), "i2v") {
+			aliReq.Parameters.Ratio = ratio
+		}
 	}
 	if v, ok := metadata["duration"]; ok {
 		if sec, ok := metadataInt(v); ok && sec > 0 {

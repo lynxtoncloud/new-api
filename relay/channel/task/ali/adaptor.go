@@ -163,6 +163,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	if isHappyHorseTask(taskReq, aliReq.Model) {
 		logger.LogInfo(c, fmt.Sprintf("happyhorse upstream json: %s", string(bodyBytes)))
+		logger.LogInfo(c, fmt.Sprintf("happyhorse task images=%d variant=%s", len(taskReq.Images), happyHorseVariantFromModels(taskReq, aliReq.Model)))
 	}
 	return bytes.NewReader(bodyBytes), nil
 }
@@ -344,7 +345,7 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 
 	// 从 metadata 合并 parameters / 扁平字段（勿整包 Unmarshal 到 aliReq，避免覆盖 input.media）
 	if req.Metadata != nil {
-		if err := mergeAliVideoMetadata(req.Metadata, aliReq); err != nil {
+		if err := mergeAliVideoMetadata(req.Metadata, aliReq, req.Model); err != nil {
 			return nil, errors.Wrap(err, "merge metadata failed")
 		}
 	}

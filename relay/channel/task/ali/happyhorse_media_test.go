@@ -2,6 +2,7 @@ package ali
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -61,6 +62,39 @@ func TestFinalizeHappyHorseR2VMultipleImages(t *testing.T) {
 	}
 	if aliReq.Input.Media[0].Type != "reference_image" {
 		t.Fatalf("type=%q", aliReq.Input.Media[0].Type)
+	}
+}
+
+func TestFinalizeHappyHorseI2VFromMetadataInputMedia(t *testing.T) {
+	req := relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-1.0-i2v",
+		Prompt: "run",
+		Metadata: map[string]interface{}{
+			"happyhorse_mode": "i2v",
+			"input": map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{"type": "image", "url": "https://cdn.example.com/a.png"},
+				},
+			},
+		},
+	}
+	aliReq := &AliVideoRequest{
+		Model:      "happyhorse-1.0-i2v",
+		Parameters: &AliVideoParameters{},
+		Input:      AliVideoInput{Prompt: "run"},
+	}
+	if err := finalizeHappyHorseAliRequest(req, aliReq); err != nil {
+		t.Fatal(err)
+	}
+	if len(aliReq.Input.Media) != 1 || aliReq.Input.Media[0].Type != "first_frame" {
+		t.Fatalf("media=%+v", aliReq.Input.Media)
+	}
+	raw, err := marshalAliVideoRequestBody(aliReq, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"first_frame"`) {
+		t.Fatalf("json missing first_frame: %s", string(raw))
 	}
 }
 

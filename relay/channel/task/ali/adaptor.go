@@ -154,6 +154,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	var finalizeErr error
 	if err := finalizeHappyHorseAliRequest(taskReq, aliReq); err != nil {
 		finalizeErr = err
+		publishHappyHorseRelayDiag(c, taskReq, aliReq, nil, err)
 		return nil, errors.Wrap(err, "finalize_happyhorse_request_failed")
 	}
 

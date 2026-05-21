@@ -42,13 +42,19 @@ func publishHappyHorseRelayDiag(c *gin.Context, taskReq relaycommon.TaskSubmitRe
 	if finalizeErr != nil {
 		errMsg = finalizeErr.Error()
 	}
+	mediaCount := len(aliReq.Input.Media)
+	if len(bodyBytes) > 0 {
+		if n := peekMarshaledHappyHorseMediaCount(bodyBytes); n >= 0 {
+			mediaCount = n
+		}
+	}
 	diag := service.HappyHorseRelayDiag{
-		Variant:           happyHorseVariantFromModels(taskReq, aliReq.Model),
+		Variant:           happyHorseVariantFromRequest(taskReq, aliReq.Model),
 		ClientModel:       strings.TrimSpace(taskReq.Model),
 		UpstreamModel:     strings.TrimSpace(aliReq.Model),
 		ImagesCount:       len(taskReq.Images),
 		ImagesBytes:       sumImageURLBytes(taskReq),
-		MediaCount:        len(aliReq.Input.Media),
+		MediaCount:        mediaCount,
 		MediaTypes:        mediaTypesFromAliReq(aliReq),
 		UpstreamBodyBytes: len(bodyBytes),
 		FinalizeError:     errMsg,

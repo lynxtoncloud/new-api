@@ -14,6 +14,19 @@ func isHappyHorseModel(model string) bool {
 	return strings.Contains(strings.ToLower(model), "happyhorse")
 }
 
+func isHappyHorseMetadata(meta map[string]interface{}) bool {
+	if meta == nil {
+		return false
+	}
+	mode := strings.ToLower(strings.TrimSpace(metadataString(meta, "happyhorse_mode")))
+	switch mode {
+	case "t2v", "i2v", "r2v", "video-edit":
+		return true
+	default:
+		return false
+	}
+}
+
 // AliMediaItem HappyHorse input.media 元素。
 type AliMediaItem struct {
 	Type string `json:"type"`

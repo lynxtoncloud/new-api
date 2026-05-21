@@ -254,6 +254,9 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	// Drop the legacy quota_data_minute when created_at is still an epoch int
+	// column so AutoMigrate recreates it with datetime created_at/end_at.
+	dropLegacyMinuteQuotaDataTable()
 
 	err := DB.AutoMigrate(
 		&Channel{},

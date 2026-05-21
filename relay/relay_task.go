@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -415,15 +416,18 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch 尝试从上游实时拉取视频任务状态。
+// 支持 Gemini/Vertex/Ali（含 HappyHorse）；出错时返回 nil，由调用方回退到 DB 快照。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	realtimeChannel := channelModel.Type == constant.ChannelTypeVertexAi ||
+		channelModel.Type == constant.ChannelTypeGemini ||
+		channelModel.Type == constant.ChannelTypeAli
+	if !realtimeChannel {
 		return nil
 	}
 
@@ -458,6 +462,10 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	snap := task.Snapshot()
 
 	// 将上游最新状态更新到 task
+	if channelModel.Type == constant.ChannelTypeAli && len(body) > 0 {
+		// Ali/HappyHorse 的 ConvertToOpenAIVideo 依赖 task.Data 中的 DashScope 原始响应
+		task.Data = json.RawMessage(body)
+	}
 	if ti.Status != "" {
 		task.Status = model.TaskStatus(ti.Status)
 	}

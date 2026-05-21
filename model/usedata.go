@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,19 +26,44 @@ type QuotaData struct {
 // MinuteQuotaData 分钟级柱状图数据。
 // 聚合粒度：user_id + username + model_name + created_at(分钟)。
 type MinuteQuotaData struct {
-	Id        int    `json:"id"`
-	UserID    int    `json:"user_id" gorm:"index;uniqueIndex:uk_min_qdt_user_model_time,priority:1"`
-	Username  string `json:"username" gorm:"index:idx_min_qdt_model_user_name,priority:2;uniqueIndex:uk_min_qdt_user_model_time,priority:2;size:64;default:''"`
-	ModelName string `json:"model_name" gorm:"index:idx_min_qdt_model_user_name,priority:1;uniqueIndex:uk_min_qdt_user_model_time,priority:3;size:64;default:''"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_min_qdt_created_at,priority:2;uniqueIndex:uk_min_qdt_user_model_time,priority:4"`
-	EndAt     int64  `json:"end_at" gorm:"bigint;index:idx_min_qdt_end_at,priority:2"`
-	TokenUsed int    `json:"token_used" gorm:"default:0"`
-	Count     int    `json:"count" gorm:"default:0"`
-	Quota     int    `json:"quota" gorm:"default:0"`
+	Id        int       `json:"id"`
+	UserID    int       `json:"user_id" gorm:"index;uniqueIndex:uk_min_qdt_user_model_time,priority:1"`
+	Username  string    `json:"username" gorm:"index:idx_min_qdt_model_user_name,priority:2;uniqueIndex:uk_min_qdt_user_model_time,priority:2;size:64;default:''"`
+	ModelName string    `json:"model_name" gorm:"index:idx_min_qdt_model_user_name,priority:1;uniqueIndex:uk_min_qdt_user_model_time,priority:3;size:64;default:''"`
+	CreatedAt time.Time `json:"created_at" gorm:"index:idx_min_qdt_created_at,priority:2;uniqueIndex:uk_min_qdt_user_model_time,priority:4"`
+	EndAt     time.Time `json:"end_at" gorm:"index:idx_min_qdt_end_at,priority:2"`
+	TokenUsed int       `json:"token_used" gorm:"default:0"`
+	Count     int       `json:"count" gorm:"default:0"`
+	Quota     int       `json:"quota" gorm:"default:0"`
 }
 
 func (MinuteQuotaData) TableName() string {
 	return "quota_data_minute"
+}
+
+// dropLegacyMinuteQuotaDataTable drops quota_data_minute when its created_at is
+// still an integer (epoch) column, so AutoMigrate recreates it with datetime
+// created_at/end_at. One-time: once recreated as datetime this is a no-op.
+func dropLegacyMinuteQuotaDataTable() {
+	m := DB.Migrator()
+	if !m.HasTable(&MinuteQuotaData{}) {
+		return
+	}
+	columnTypes, err := m.ColumnTypes(&MinuteQuotaData{})
+	if err != nil {
+		return
+	}
+	for _, ct := range columnTypes {
+		if ct.Name() != "created_at" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(ct.DatabaseTypeName()), "int") {
+			if err := m.DropTable(&MinuteQuotaData{}); err != nil {
+				common.SysLog("drop legacy quota_data_minute failed: " + err.Error())
+			}
+		}
+		return
+	}
 }
 
 func UpdateQuotaData() {
@@ -99,8 +125,8 @@ func logMinuteQuotaDataCache(userId int, username string, modelName string, quot
 			UserID:    userId,
 			Username:  username,
 			ModelName: modelName,
-			CreatedAt: createdAt,
-			EndAt:     createdAt + 60,
+			CreatedAt: time.Unix(createdAt, 0).UTC(),
+			EndAt:     time.Unix(createdAt+60, 0).UTC(),
 			Count:     1,
 			Quota:     quota,
 			TokenUsed: tokenUsed,
@@ -174,7 +200,7 @@ func increaseQuotaData(userId int, username string, modelName string, count int,
 	}
 }
 
-func increaseMinuteQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64, endAt int64, tokenUsed int) {
+func increaseMinuteQuotaData(userId int, username string, modelName string, count int, quota int, createdAt time.Time, endAt time.Time, tokenUsed int) {
 	err := DB.Table("quota_data_minute").Where("user_id = ? and username = ? and model_name = ? and created_at = ?",
 		userId, username, modelName, createdAt).Updates(map[string]interface{}{
 		"count":      gorm.Expr("count + ?", count),

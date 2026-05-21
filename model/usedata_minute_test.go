@@ -21,8 +21,11 @@ func TestLogMinuteQuotaDataAggregatesByMinute(t *testing.T) {
 	if item == nil {
 		t.Fatalf("expected bucket at minute timestamp 1710000060")
 	}
-	if item.EndAt != 1710000120 {
-		t.Fatalf("expected end_at 1710000120, got %d", item.EndAt)
+	if item.CreatedAt.Unix() != 1710000060 {
+		t.Fatalf("expected created_at 1710000060, got %d", item.CreatedAt.Unix())
+	}
+	if item.EndAt.Unix() != 1710000120 {
+		t.Fatalf("expected end_at 1710000120, got %d", item.EndAt.Unix())
 	}
 	if item.Count != 2 {
 		t.Fatalf("expected count 2, got %d", item.Count)

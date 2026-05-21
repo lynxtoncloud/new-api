@@ -15,22 +15,30 @@ func isHappyHorseTask(req relaycommon.TaskSubmitReq, upstreamModel string) bool 
 
 func happyHorseVariantFromModels(req relaycommon.TaskSubmitReq, upstreamModel string) string {
 	for _, m := range []string{req.Model, upstreamModel} {
-		lower := strings.ToLower(strings.TrimSpace(m))
-		if !strings.Contains(lower, "happyhorse") {
-			continue
-		}
-		switch {
-		case strings.Contains(lower, "video-edit"):
-			return "video-edit"
-		case strings.Contains(lower, "r2v"):
-			return "r2v"
-		case strings.Contains(lower, "i2v"):
-			return "i2v"
-		case strings.Contains(lower, "t2v"):
-			return "t2v"
+		if v := happyHorseVariantFromModelName(m); v != "" {
+			return v
 		}
 	}
 	return ""
+}
+
+func happyHorseVariantFromModelName(model string) string {
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if !strings.Contains(lower, "happyhorse") {
+		return ""
+	}
+	switch {
+	case strings.Contains(lower, "video-edit"):
+		return "video-edit"
+	case strings.Contains(lower, "r2v"):
+		return "r2v"
+	case strings.Contains(lower, "i2v"):
+		return "i2v"
+	case strings.Contains(lower, "t2v"):
+		return "t2v"
+	default:
+		return ""
+	}
 }
 
 func collectImageURLs(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) []string {
@@ -127,18 +135,22 @@ func applyHappyHorseMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest
 	if !isHappyHorseTask(req, aliReq.Model) {
 		return nil
 	}
-	switch happyHorseVariantFromModels(req, aliReq.Model) {
+	variant := happyHorseVariantFromModels(req, aliReq.Model)
+	if variant == "" && isHappyHorseModel(req.Model) {
+		variant = happyHorseVariantFromModelName(req.Model)
+	}
+	switch variant {
 	case "video-edit":
 		return applyHappyHorseVideoEdit(req, aliReq)
 	case "r2v":
 		return applyHappyHorseR2VMedia(req, aliReq)
 	case "i2v":
 		return applyHappyHorseI2VStyleMedia(req, aliReq, "i2v")
-	default:
-		aliReq.Input.Media = nil
-		aliReq.Input.ImgURL = ""
-		aliReq.Input.FirstFrameURL = ""
+	case "t2v":
+		// 文生视频不需要 media；切勿清空 metadata 已合并的 input.media
 		return nil
+	default:
+		return fmt.Errorf("happyhorse: cannot resolve variant (client_model=%q upstream_model=%q)", req.Model, aliReq.Model)
 	}
 }
 

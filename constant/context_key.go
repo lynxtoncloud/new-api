@@ -77,4 +77,16 @@ const (
 	ContextKeyOpsBillingTotalTokens      ContextKey = "ops_billing_total_tokens"
 	ContextKeyOpsBillingConsumeQuota     ContextKey = "ops_billing_consume_quota"
 	ContextKeyOpsBillingSnapshotFrom     ContextKey = "ops_billing_snapshot_from"
+
+	// HappyHorse relay diagnostics (set in ali adaptor BuildRequestBody; read by Lynxton relay_request_summary).
+	ContextKeyOpsHappyHorseVariant          ContextKey = "ops_happyhorse_variant"
+	ContextKeyOpsHappyHorseClientModel      ContextKey = "ops_happyhorse_client_model"
+	ContextKeyOpsHappyHorseUpstreamModel    ContextKey = "ops_happyhorse_upstream_model"
+	ContextKeyOpsHappyHorseImagesCount      ContextKey = "ops_happyhorse_images_count"
+	ContextKeyOpsHappyHorseImagesBytes      ContextKey = "ops_happyhorse_images_bytes"
+	ContextKeyOpsHappyHorseMediaCount       ContextKey = "ops_happyhorse_media_count"
+	ContextKeyOpsHappyHorseMediaTypes       ContextKey = "ops_happyhorse_media_types"
+	ContextKeyOpsHappyHorseUpstreamBodyBytes ContextKey = "ops_happyhorse_upstream_body_bytes"
+	ContextKeyOpsHappyHorseFinalizeError    ContextKey = "ops_happyhorse_finalize_error"
+	ContextKeyOpsHappyHorseSnapshotFrom     ContextKey = "ops_happyhorse_snapshot_from"
 )

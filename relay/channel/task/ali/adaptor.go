@@ -10,7 +10,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -152,19 +151,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, errors.Wrap(err, "convert_to_ali_request_failed")
 	}
+	var finalizeErr error
 	if err := finalizeHappyHorseAliRequest(taskReq, aliReq); err != nil {
+		finalizeErr = err
 		return nil, errors.Wrap(err, "finalize_happyhorse_request_failed")
 	}
-	logger.LogJson(c, "ali video request body", aliReq)
 
 	bodyBytes, err := marshalAliVideoRequestBody(aliReq, taskReq)
 	if err != nil {
+		publishHappyHorseRelayDiag(c, taskReq, aliReq, nil, err)
 		return nil, errors.Wrap(err, "marshal_ali_request_failed")
 	}
-	if isHappyHorseTask(taskReq, aliReq.Model) {
-		logger.LogInfo(c, fmt.Sprintf("happyhorse upstream json: %s", string(bodyBytes)))
-		logger.LogInfo(c, fmt.Sprintf("happyhorse task images=%d variant=%s", len(taskReq.Images), happyHorseVariantFromModels(taskReq, aliReq.Model)))
-	}
+	publishHappyHorseRelayDiag(c, taskReq, aliReq, bodyBytes, finalizeErr)
 	return bytes.NewReader(bodyBytes), nil
 }
 

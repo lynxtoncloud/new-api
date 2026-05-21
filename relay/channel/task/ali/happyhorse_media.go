@@ -293,9 +293,15 @@ func finalizeHappyHorseAliRequest(req relaycommon.TaskSubmitReq, aliReq *AliVide
 		return err
 	}
 	applyHappyHorseDefaultVisuals(aliReq, aliReq.Model)
+	normalizeOfficialHappyHorseParameters(aliReq, variant)
 	if variant != "video-edit" && aliReq.Parameters != nil {
 		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
 	}
+	encoded, err := encodeHappyHorseMediaImagesToBase64(aliReq.Input.Media)
+	if err != nil {
+		return err
+	}
+	aliReq.Input.Media = encoded
 	return assertHappyHorseMediaPresent(req, aliReq)
 }
 

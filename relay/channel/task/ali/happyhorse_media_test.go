@@ -1,6 +1,7 @@
 package ali
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -44,10 +45,15 @@ func TestFinalizeHappyHorseI2VMarshalsMedia(t *testing.T) {
 }
 
 func TestFinalizeHappyHorseR2VMultipleImages(t *testing.T) {
+	b1 := base64.StdEncoding.EncodeToString([]byte("img1"))
+	b2 := base64.StdEncoding.EncodeToString([]byte("img2"))
 	req := relaycommon.TaskSubmitReq{
 		Model:  "happyhorse-1.0-r2v",
 		Prompt: "ref",
-		Images: []string{"https://a/1.png", "https://a/2.png"},
+		Images: []string{
+			"data:image/png;base64," + b1,
+			"data:image/png;base64," + b2,
+		},
 	}
 	aliReq := &AliVideoRequest{
 		Model:      "happyhorse-1.0-r2v",
@@ -63,6 +69,9 @@ func TestFinalizeHappyHorseR2VMultipleImages(t *testing.T) {
 	if aliReq.Input.Media[0].Type != "reference_image" {
 		t.Fatalf("type=%q", aliReq.Input.Media[0].Type)
 	}
+	if !strings.HasPrefix(aliReq.Input.Media[0].URL, "data:image/") {
+		t.Fatalf("expected data url, got %q", aliReq.Input.Media[0].URL)
+	}
 }
 
 func TestFinalizeHappyHorseI2VFromMetadataInputMedia(t *testing.T) {
@@ -73,7 +82,10 @@ func TestFinalizeHappyHorseI2VFromMetadataInputMedia(t *testing.T) {
 			"happyhorse_mode": "i2v",
 			"input": map[string]interface{}{
 				"media": []interface{}{
-					map[string]interface{}{"type": "image", "url": "https://cdn.example.com/a.png"},
+					map[string]interface{}{
+						"type": "image",
+						"url":  "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("frame")),
+					},
 				},
 			},
 		},

@@ -109,60 +109,33 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				// Lynxton model-alias routing: 若请求模型是启用的对外 alias，则按其真实 target
-				// 两段式选择渠道（设计 §7.2）。非 alias 时 isAlias=false，走原有逻辑，行为不变。
-				if aliasResolution, isAlias := service.ResolveModelAlias(modelRequest.Model); isAlias {
-					// §8 无价兜底：alias 配了 target 却没配价 -> 拒绝，避免免费刷量。
-					if !aliasResolution.HasPrice {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "模型暂不可用：未配置价格", types.ErrorCodeModelNotFound)
-						return
-					}
-					// §15.1 alias 没有任何启用 target。
-					if len(aliasResolution.OrderedTargets) == 0 {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "模型暂不可用：未配置真实模型", types.ErrorCodeModelNotFound)
-						return
-					}
-					var selectedTarget string
-					channel, selectGroup, selectedTarget = selectChannelForAlias(c, aliasResolution, usingGroup)
-					if channel == nil {
-						// §15.2 所有 target 都无可用渠道。
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
-						return
-					}
-					// 注入 alias context：OriginModelName=alias（计费/权限/日志），UpstreamModelName=target（上游）。
-					common.SetContextKey(c, constant.ContextKeyAliasOriginModel, aliasResolution.OriginModel)
-					common.SetContextKey(c, constant.ContextKeyAliasUpstreamModel, selectedTarget)
-					// §15.5 重试游标：保存有序候选与当前 target，供重试推进。
-					common.SetContextKey(c, constant.ContextKeyAliasOrderedTargets, aliasResolution.OrderedTargets)
-					common.SetContextKey(c, constant.ContextKeyAliasSelectedTarget, selectedTarget)
-				} else {
-					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-						preferred, err := model.CacheGetChannel(preferredChannelID)
-						if err == nil && preferred != nil {
-							if preferred.Status != common.ChannelStatusEnabled {
-								if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-									abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-									return
-								}
-							} else if usingGroup == "auto" {
-								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-								autoGroups := service.GetUserAutoGroup(userGroup)
-								for _, g := range autoGroups {
-									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-										selectGroup = g
-										common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-										channel = preferred
-										service.MarkChannelAffinityUsed(c, g, preferred.Id)
-										break
-									}
-								}
-							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-								channel = preferred
-								selectGroup = usingGroup
-								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+					preferred, err := model.CacheGetChannel(preferredChannelID)
+					if err == nil && preferred != nil {
+						if preferred.Status != common.ChannelStatusEnabled {
+							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+								return
 							}
+						} else if usingGroup == "auto" {
+							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+							autoGroups := service.GetUserAutoGroup(userGroup)
+							for _, g := range autoGroups {
+								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+									selectGroup = g
+									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+									channel = preferred
+									service.MarkChannelAffinityUsed(c, g, preferred.Id)
+									break
+								}
+							}
+						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+							channel = preferred
+							selectGroup = usingGroup
+							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
 					}
+				}
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
@@ -199,59 +172,6 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
-}
-
-// selectChannelForAlias 实现 Lynxton alias 路由的两段式渠道选择 + 方案A 渠道亲和
-// （设计 §7.2 / §15.6）。第一段（按 priority/weight 排序 target）已在 alias 层完成，这里逐 target
-// 复用现有缓存选择器 CacheGetRandomSatisfiedChannel，由它负责 auto 分组展开与渠道权重。
-//
-// 方案A 亲和：亲和 cache key 仍用 alias 名，命中后按真实 target 校验该 channel 是否仍服务于某个
-// 候选 target（IsChannelEnabledForGroupModel(group, target, channelID)），从而把"记录与命中都基于
-// 真实 target"落在现有亲和机制上。亲和未命中/渠道不可用时直接进入两段式选择（alias 路由统一以
-// "找下一个可用渠道"兜底，不复制原有 skip-retry 硬 403 分支）。
-//
-// 返回 (channel, selectGroup, selectedTarget)；channel 为 nil 表示所有 target 都无可用渠道（§15.2）。
-func selectChannelForAlias(c *gin.Context, resolution *service.AliasResolution, usingGroup string) (*model.Channel, string, string) {
-	if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, resolution.OriginModel, usingGroup); found {
-		if preferred, err := model.CacheGetChannel(preferredChannelID); err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled {
-			if usingGroup == "auto" {
-				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-				for _, g := range service.GetUserAutoGroup(userGroup) {
-					for _, t := range resolution.OrderedTargets {
-						if model.IsChannelEnabledForGroupModel(g, t, preferred.Id) {
-							common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-							service.MarkChannelAffinityUsed(c, g, preferred.Id)
-							return preferred, g, t
-						}
-					}
-				}
-			} else {
-				for _, t := range resolution.OrderedTargets {
-					if model.IsChannelEnabledForGroupModel(usingGroup, t, preferred.Id) {
-						service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
-						return preferred, usingGroup, t
-					}
-				}
-			}
-		}
-	}
-
-	for _, t := range resolution.OrderedTargets {
-		// 每个 target 都从头搜索 auto 分组：重置上一个 target 在 context 留下的游标，
-		// 否则 CacheGetRandomSatisfiedChannel 会从已耗尽的分组索引继续而漏选。
-		common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, 0)
-		common.SetContextKey(c, constant.ContextKeyAutoGroupRetryIndex, 0)
-		ch, sg, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-			Ctx:        c,
-			ModelName:  t,
-			TokenGroup: usingGroup,
-			Retry:      common.GetPointer(0),
-		})
-		if err == nil && ch != nil {
-			return ch, sg, t
-		}
-	}
-	return nil, usingGroup, ""
 }
 
 // getModelFromRequest 从请求中读取模型信息

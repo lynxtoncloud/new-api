@@ -228,6 +228,8 @@ func applyHappyHorseI2VStyleMedia(req relaycommon.TaskSubmitReq, aliReq *AliVide
 	if len(urls) == 0 {
 		return fmt.Errorf("happyhorse %s requires at least one image (images[], metadata.input.media with first_frame, or content[].image_url)", variant)
 	}
+	// 官方：i2v 有且仅有 1 张首帧图
+	urls = urls[:1]
 	aliReq.Input.Media = buildOfficialHappyHorseMedia("i2v", urls, "")
 	aliReq.Input.ImgURL = ""
 	aliReq.Input.FirstFrameURL = ""
@@ -241,6 +243,25 @@ func applyHappyHorseI2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) 
 	return applyHappyHorseI2VStyleMedia(req, aliReq, "i2v")
 }
 
+func ensureHappyHorseR2VPrompt(prompt string, imageCount int) string {
+	prompt = strings.TrimSpace(prompt)
+	if imageCount <= 0 {
+		return prompt
+	}
+	if strings.Contains(prompt, "[Image") {
+		return prompt
+	}
+	refs := make([]string, imageCount)
+	for i := range refs {
+		refs[i] = fmt.Sprintf("[Image %d]", i+1)
+	}
+	prefix := strings.Join(refs, "、")
+	if prompt == "" {
+		return prefix
+	}
+	return prefix + " " + prompt
+}
+
 func applyHappyHorseR2VMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
 	urls := collectImageURLs(req, aliReq)
 	if len(urls) == 0 {
@@ -252,6 +273,7 @@ func applyHappyHorseR2VMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequ
 	aliReq.Input.Media = buildOfficialHappyHorseMedia("r2v", urls, "")
 	aliReq.Input.ImgURL = ""
 	aliReq.Input.FirstFrameURL = ""
+	aliReq.Input.Prompt = ensureHappyHorseR2VPrompt(aliReq.Input.Prompt, len(urls))
 	return nil
 }
 
@@ -343,17 +365,24 @@ func happyHorseParametersMap(aliReq *AliVideoRequest, req relaycommon.TaskSubmit
 	if aliReq.Parameters == nil {
 		return nil
 	}
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
 	p := aliReq.Parameters
 	out := map[string]interface{}{}
-	if p.Resolution != "" {
-		out["resolution"] = p.Resolution
+	if variant != "video-edit" {
+		res := p.Resolution
+		if res == "" {
+			res = "1080P"
+		}
+		out["resolution"] = res
+		dur := p.Duration
+		if dur <= 0 {
+			dur = 5
+		}
+		out["duration"] = dur
 	}
 	// 官方：图生视频不支持 ratio，带上可能导致上游参数异常
-	if p.Ratio != "" && happyHorseVariantFromRequest(req, aliReq.Model) != "i2v" {
+	if p.Ratio != "" && variant != "i2v" && variant != "video-edit" {
 		out["ratio"] = p.Ratio
-	}
-	if p.Duration > 0 {
-		out["duration"] = p.Duration
 	}
 	if p.Seed > 0 {
 		out["seed"] = p.Seed

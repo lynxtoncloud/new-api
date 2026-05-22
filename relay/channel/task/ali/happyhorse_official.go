@@ -18,8 +18,17 @@ var (
 	}
 )
 
-func normalizeOfficialHappyHorseRatio(variant, ratio string) string {
+func sanitizeHappyHorseRatioString(ratio string) string {
 	r := strings.TrimSpace(ratio)
+	r = strings.ReplaceAll(r, "：", ":")
+	r = strings.ReplaceAll(r, "／", "/")
+	r = strings.ReplaceAll(r, "/", ":")
+	r = strings.ReplaceAll(r, " ", "")
+	return r
+}
+
+func normalizeOfficialHappyHorseRatio(variant, ratio string) string {
+	r := sanitizeHappyHorseRatioString(ratio)
 	if r == "" {
 		return "16:9"
 	}
@@ -61,15 +70,25 @@ func normalizeOfficialHappyHorseParameters(aliReq *AliVideoRequest, variant stri
 		p.AudioSetting = ""
 	case "i2v":
 		p.Ratio = ""
-		if p.Resolution != "" {
-			p.Resolution = normalizeOfficialHappyHorseResolution(p.Resolution)
+		p.Resolution = normalizeOfficialHappyHorseResolution(p.Resolution)
+		if p.Resolution == "" {
+			p.Resolution = "1080P"
 		}
+		if p.Duration <= 0 {
+			p.Duration = 5
+		}
+		p.Duration = clampHappyHorseDuration(p.Duration)
 		p.AudioSetting = ""
 	case "r2v":
-		if p.Resolution != "" {
-			p.Resolution = normalizeOfficialHappyHorseResolution(p.Resolution)
+		p.Resolution = normalizeOfficialHappyHorseResolution(p.Resolution)
+		if p.Resolution == "" {
+			p.Resolution = "1080P"
 		}
 		p.Ratio = normalizeOfficialHappyHorseRatio("r2v", p.Ratio)
+		if p.Duration <= 0 {
+			p.Duration = 5
+		}
+		p.Duration = clampHappyHorseDuration(p.Duration)
 		p.AudioSetting = ""
 	case "video-edit":
 		p.Ratio = ""

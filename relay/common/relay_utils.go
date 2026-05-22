@@ -165,6 +165,11 @@ func validatePrompt(prompt string) *dto.TaskError {
 	return nil
 }
 
+func happyHorseI2VPromptOptional(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(m, "happyhorse") && strings.Contains(m, "i2v")
+}
+
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
@@ -250,8 +255,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		hasInputReference = true
 	}
 
-	if taskErr := validatePrompt(prompt); taskErr != nil {
-		return taskErr
+	if !happyHorseI2VPromptOptional(model) {
+		if taskErr := validatePrompt(prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	action := constant.TaskActionTextGenerate
@@ -406,8 +413,8 @@ func validateHappyHorseTaskSubmitReq(req TaskSubmitReq) *dto.TaskError {
 			return createTaskError(fmt.Errorf("happyhorse %s requires at least one image in images[]", m), "missing_images", http.StatusBadRequest, true)
 		}
 	case strings.Contains(m, "i2v"):
-		if len(req.Images) == 0 {
-			return createTaskError(fmt.Errorf("happyhorse %s requires at least one image in images[]", m), "missing_images", http.StatusBadRequest, true)
+		if !req.HasImage() {
+			return createTaskError(fmt.Errorf("happyhorse i2v requires first frame image (images[], content, or metadata.input.media)"), "missing_images", http.StatusBadRequest, true)
 		}
 	}
 	return nil
@@ -459,8 +466,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 
-	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
-		return taskErr
+	if !happyHorseI2VPromptOptional(req.Model) {
+		if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {

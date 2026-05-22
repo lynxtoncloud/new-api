@@ -1,7 +1,6 @@
 package ali
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -13,7 +12,7 @@ func TestFinalizeHappyHorseI2VMarshalsMedia(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
 		Model:  "happyhorse-1.0-i2v",
 		Prompt: "run",
-		Images: []string{"data:image/jpeg;base64,abc"},
+		Images: []string{happyHorseTestJPEGDataURL(400, 400)},
 	}
 	aliReq := &AliVideoRequest{
 		Model:      "wan2.5-i2v-preview",
@@ -45,14 +44,12 @@ func TestFinalizeHappyHorseI2VMarshalsMedia(t *testing.T) {
 }
 
 func TestFinalizeHappyHorseR2VMultipleImages(t *testing.T) {
-	b1 := base64.StdEncoding.EncodeToString([]byte("img1"))
-	b2 := base64.StdEncoding.EncodeToString([]byte("img2"))
 	req := relaycommon.TaskSubmitReq{
 		Model:  "happyhorse-1.0-r2v",
 		Prompt: "ref",
 		Images: []string{
-			"data:image/png;base64," + b1,
-			"data:image/png;base64," + b2,
+			happyHorseTestJPEGDataURL(400, 400),
+			happyHorseTestJPEGDataURL(400, 500),
 		},
 	}
 	aliReq := &AliVideoRequest{
@@ -84,7 +81,7 @@ func TestFinalizeHappyHorseI2VFromMetadataInputMedia(t *testing.T) {
 				"media": []interface{}{
 					map[string]interface{}{
 						"type": "image",
-						"url":  "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("frame")),
+						"url":  happyHorseTestJPEGDataURL(400, 400),
 					},
 				},
 			},

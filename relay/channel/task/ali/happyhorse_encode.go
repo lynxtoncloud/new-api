@@ -11,6 +11,14 @@ import (
 	"github.com/QuantumNous/new-api/service"
 )
 
+func base64StdDecode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
+}
+
+func base64RawStdDecode(s string) ([]byte, error) {
+	return base64.RawStdEncoding.DecodeString(s)
+}
+
 const happyHorseMaxImageBytes = 20 << 20 // 官方：单图不超过 20MB
 
 var happyHorseImageHTTPClient = &http.Client{Timeout: 45 * time.Second}
@@ -32,7 +40,7 @@ func encodeHappyHorseMediaImagesToBase64(media []AliMediaItem) ([]AliMediaItem, 
 			}
 			out[i] = AliMediaItem{Type: typ, URL: rawURL}
 		case "first_frame", "reference_image":
-			encoded, err := encodeHappyHorseImageToDataURL(rawURL)
+			encoded, err := encodeHappyHorseImageToDataURL(rawURL, typ)
 			if err != nil {
 				return nil, fmt.Errorf("happyhorse encode %s[%d]: %w", typ, i, err)
 			}
@@ -44,7 +52,7 @@ func encodeHappyHorseMediaImagesToBase64(media []AliMediaItem) ([]AliMediaItem, 
 	return out, nil
 }
 
-func encodeHappyHorseImageToDataURL(raw string) (string, error) {
+func encodeHappyHorseImageToDataURL(raw, mediaType string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("empty image url")
@@ -54,13 +62,29 @@ func encodeHappyHorseImageToDataURL(raw string) (string, error) {
 		return "", fmt.Errorf("blob urls are not supported; upload images via the API body")
 	}
 	if strings.HasPrefix(lower, "data:") {
-		return normalizeHappyHorseDataURL(raw)
+		out, err := normalizeHappyHorseDataURL(raw)
+		if err != nil {
+			return "", err
+		}
+		label := happyHorseImageLabel(mediaType)
+		if err := validateHappyHorseImageDataURL(out, mediaType, label); err != nil {
+			return "", err
+		}
+		return out, nil
 	}
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		return downloadHappyHorseImageAsDataURL(raw)
+		return downloadHappyHorseImageAsDataURL(raw, mediaType)
 	}
 	if looksLikeRawBase64(raw) {
-		return fmt.Sprintf("data:image/jpeg;base64,%s", stripBase64Whitespace(raw)), nil
+		payload := stripBase64Whitespace(raw)
+		rawBytes, err := base64DecodeFlexible(payload)
+		if err != nil {
+			return "", fmt.Errorf("invalid base64 image: %w", err)
+		}
+		if err := validateHappyHorseImageBytes(rawBytes, mediaType, happyHorseImageLabel(mediaType)); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("data:image/jpeg;base64,%s", payload), nil
 	}
 	return "", fmt.Errorf("unsupported image reference (need data: url, http(s) url, or base64)")
 }
@@ -93,7 +117,14 @@ func normalizeHappyHorseDataURL(dataURL string) (string, error) {
 	return fmt.Sprintf("data:%s;base64,%s", mime, payload), nil
 }
 
-func downloadHappyHorseImageAsDataURL(url string) (string, error) {
+func happyHorseImageLabel(mediaType string) string {
+	if strings.EqualFold(strings.TrimSpace(mediaType), "first_frame") {
+		return "first frame image"
+	}
+	return "reference image"
+}
+
+func downloadHappyHorseImageAsDataURL(url, mediaType string) (string, error) {
 	client := happyHorseImageHTTPClient
 	if c := service.GetHttpClient(); c != nil && c.Timeout > 0 {
 		client = c
@@ -120,6 +151,9 @@ func downloadHappyHorseImageAsDataURL(url string) (string, error) {
 	}
 	if len(body) == 0 {
 		return "", fmt.Errorf("empty image body")
+	}
+	if err := validateHappyHorseImageBytes(body, mediaType, happyHorseImageLabel(mediaType)); err != nil {
+		return "", err
 	}
 	ct := resp.Header.Get("Content-Type")
 	mime := normalizeHappyHorseImageMIME(ct)

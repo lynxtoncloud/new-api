@@ -11,7 +11,8 @@ import (
 )
 
 func TestNormalizeHappyHorseDataURL(t *testing.T) {
-	raw := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	raw := happyHorseTestJPEGDataURL(400, 400)
+	raw = strings.Replace(raw, "image/jpeg", "image/png", 1)
 	out, err := normalizeHappyHorseDataURL(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -22,13 +23,19 @@ func TestNormalizeHappyHorseDataURL(t *testing.T) {
 }
 
 func TestEncodeHappyHorseHTTPImage(t *testing.T) {
+	jpegURL := happyHorseTestJPEGDataURL(400, 400)
+	payload := strings.TrimPrefix(jpegURL, "data:image/jpeg;base64,")
+	jpegBytes, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0x00})
+		_, _ = w.Write(jpegBytes)
 	}))
 	defer srv.Close()
 
-	out, err := encodeHappyHorseImageToDataURL(srv.URL + "/a.jpg")
+	out, err := encodeHappyHorseImageToDataURL(srv.URL+"/a.jpg", "first_frame")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,11 +45,10 @@ func TestEncodeHappyHorseHTTPImage(t *testing.T) {
 }
 
 func TestFinalizeHappyHorseR2VEncodesMediaToDataURL(t *testing.T) {
-	payload := base64.StdEncoding.EncodeToString([]byte("jpeg-bytes"))
 	req := relaycommon.TaskSubmitReq{
 		Model:  "happyhorse-1.0-r2v",
 		Prompt: "[Image 1] test",
-		Images: []string{"data:image/jpeg;base64," + payload},
+		Images: []string{happyHorseTestJPEGDataURL(400, 400)},
 	}
 	aliReq := &AliVideoRequest{
 		Model:      "happyhorse-1.0-r2v",

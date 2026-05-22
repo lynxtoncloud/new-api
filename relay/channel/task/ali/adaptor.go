@@ -410,9 +410,20 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	// 检查错误
+	// 检查错误（HTTP 400 等也可能带 code/message）
 	if aliResp.Code != "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s: %s", aliResp.Code, aliResp.Message), "ali_api_error", resp.StatusCode)
+		msg := strings.TrimSpace(aliResp.Message)
+		if msg == "" {
+			msg = strings.TrimSpace(aliResp.Output.Message)
+		}
+		if msg == "" {
+			msg = "upstream rejected request"
+		}
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("%s: %s", aliResp.Code, msg), "ali_api_error", resp.StatusCode)
+		return
+	}
+	if resp.StatusCode >= 400 {
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("ali http %d: %s", resp.StatusCode, string(responseBody)), "ali_api_error", resp.StatusCode)
 		return
 	}
 

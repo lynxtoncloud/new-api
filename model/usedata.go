@@ -57,7 +57,8 @@ func dropLegacyMinuteQuotaDataTable() {
 		if ct.Name() != "created_at" {
 			continue
 		}
-		if strings.Contains(strings.ToLower(ct.DatabaseTypeName()), "int") {
+		dbTypeName := strings.ToLower(ct.DatabaseTypeName())
+		if strings.Contains(dbTypeName, "int") || !strings.Contains(dbTypeName, "time") {
 			if err := m.DropTable(&MinuteQuotaData{}); err != nil {
 				common.SysLog("drop legacy quota_data_minute failed: " + err.Error())
 			}

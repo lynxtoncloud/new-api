@@ -1,0 +1,475 @@
+package ali
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+)
+
+func isHappyHorseTask(req relaycommon.TaskSubmitReq, upstreamModel string) bool {
+	return isHappyHorseModel(req.Model) || isHappyHorseModel(upstreamModel) || isHappyHorseMetadata(req.Metadata)
+}
+
+func happyHorseVariantFromModels(req relaycommon.TaskSubmitReq, upstreamModel string) string {
+	for _, m := range []string{req.Model, upstreamModel} {
+		if v := happyHorseVariantFromModelName(m); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// happyHorseVariantFromRequest 解析模式：模型名 → metadata.happyhorse_mode（前端显式标注）。
+func happyHorseVariantFromRequest(req relaycommon.TaskSubmitReq, upstreamModel string) string {
+	if v := happyHorseVariantFromModels(req, upstreamModel); v != "" {
+		return v
+	}
+	if req.Metadata != nil {
+		mode := strings.ToLower(strings.TrimSpace(metadataString(req.Metadata, "happyhorse_mode")))
+		switch mode {
+		case "t2v", "i2v", "r2v", "video-edit":
+			return mode
+		}
+	}
+	return ""
+}
+
+// buildOfficialHappyHorseMedia 按官方文档组装 input.media（i2v=first_frame，r2v=reference_image）。
+func buildOfficialHappyHorseMedia(variant string, imageURLs []string, videoURL string) []AliMediaItem {
+	switch variant {
+	case "i2v":
+		if len(imageURLs) == 0 {
+			return nil
+		}
+		return []AliMediaItem{{Type: "first_frame", URL: imageURLs[0]}}
+	case "r2v":
+		if len(imageURLs) == 0 {
+			return nil
+		}
+		if len(imageURLs) > 9 {
+			imageURLs = imageURLs[:9]
+		}
+		media := make([]AliMediaItem, 0, len(imageURLs))
+		for _, u := range imageURLs {
+			media = append(media, AliMediaItem{Type: "reference_image", URL: u})
+		}
+		return media
+	case "video-edit":
+		videoURL = strings.TrimSpace(videoURL)
+		if videoURL == "" {
+			return nil
+		}
+		media := []AliMediaItem{{Type: "video", URL: videoURL}}
+		if len(imageURLs) > 5 {
+			imageURLs = imageURLs[:5]
+		}
+		for _, u := range imageURLs {
+			media = append(media, AliMediaItem{Type: "reference_image", URL: u})
+		}
+		return media
+	default:
+		return nil
+	}
+}
+
+func happyHorseVariantFromModelName(model string) string {
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if !strings.Contains(lower, "happyhorse") {
+		return ""
+	}
+	switch {
+	case strings.Contains(lower, "video-edit"):
+		return "video-edit"
+	case strings.Contains(lower, "r2v"):
+		return "r2v"
+	case strings.Contains(lower, "i2v"):
+		return "i2v"
+	case strings.Contains(lower, "t2v"):
+		return "t2v"
+	default:
+		return ""
+	}
+}
+
+func collectImageURLs(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) []string {
+	seen := map[string]bool{}
+	var urls []string
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		urls = append(urls, u)
+	}
+	for _, img := range req.Images {
+		add(img)
+	}
+	add(req.InputReference)
+	add(req.Image)
+	if aliReq != nil {
+		add(aliReq.Input.ImgURL)
+		add(aliReq.Input.FirstFrameURL)
+		for _, item := range aliReq.Input.Media {
+			add(item.URL)
+		}
+	}
+	if req.Metadata != nil {
+		add(metadataString(req.Metadata, "img_url", "image_url", "first_frame_url"))
+		if raw, ok := req.Metadata["reference_images"].([]interface{}); ok {
+			for _, item := range raw {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+		if raw, ok := req.Metadata["images"].([]interface{}); ok {
+			for _, item := range raw {
+				if s, ok := item.(string); ok {
+					add(s)
+				}
+			}
+		}
+		collectImageURLsFromContent(req.Metadata["content"], add)
+		collectImageURLsFromInputObject(req.Metadata["input"], add)
+	}
+	return urls
+}
+
+func collectImageURLsFromContent(raw interface{}, add func(string)) {
+	items, ok := raw.([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ := strings.ToLower(metadataString(m, "type"))
+		switch typ {
+		case "image_url", "image":
+			if imageURL, ok := m["image_url"].(map[string]interface{}); ok {
+				add(metadataString(imageURL, "url"))
+			}
+			add(metadataString(m, "url"))
+		case "input_image":
+			if image, ok := m["image"].(string); ok {
+				add(image)
+			}
+		}
+	}
+}
+
+func collectImageURLsFromInputObject(raw interface{}, add func(string)) {
+	input, ok := raw.(map[string]interface{})
+	if !ok {
+		return
+	}
+	if mediaRaw, ok := input["media"].([]interface{}); ok {
+		for _, item := range mediaRaw {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			typ := strings.ToLower(metadataString(m, "type"))
+			if typ == "first_frame" || typ == "reference_image" || typ == "image" {
+				add(metadataString(m, "url"))
+			}
+		}
+	}
+	add(metadataString(input, "img_url", "first_frame_url", "image_url"))
+}
+
+func applyHappyHorseMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	if !isHappyHorseTask(req, aliReq.Model) {
+		return nil
+	}
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
+	switch variant {
+	case "video-edit":
+		return applyHappyHorseVideoEdit(req, aliReq)
+	case "r2v":
+		return applyHappyHorseR2VMedia(req, aliReq)
+	case "i2v":
+		return applyHappyHorseI2VStyleMedia(req, aliReq, "i2v")
+	case "t2v":
+		// 文生视频不需要 media；清除万相遗留字段，避免序列化带入
+		aliReq.Input.Media = nil
+		aliReq.Input.ImgURL = ""
+		aliReq.Input.FirstFrameURL = ""
+		return nil
+	default:
+		return fmt.Errorf("happyhorse: cannot resolve variant (client_model=%q upstream_model=%q)", req.Model, aliReq.Model)
+	}
+}
+
+func mediaURLsFromAliInput(aliReq *AliVideoRequest) []string {
+	if aliReq == nil {
+		return nil
+	}
+	var urls []string
+	for _, item := range aliReq.Input.Media {
+		if u := strings.TrimSpace(item.URL); u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
+func applyHappyHorseI2VStyleMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest, variant string) error {
+	urls := collectImageURLs(req, aliReq)
+	if len(urls) == 0 {
+		urls = mediaURLsFromAliInput(aliReq)
+	}
+	if len(urls) == 0 {
+		return fmt.Errorf("happyhorse %s requires at least one image (images[], metadata.input.media with first_frame, or content[].image_url)", variant)
+	}
+	// 官方：i2v 有且仅有 1 张首帧图
+	urls = urls[:1]
+	aliReq.Input.Media = buildOfficialHappyHorseMedia("i2v", urls, "")
+	aliReq.Input.ImgURL = ""
+	aliReq.Input.FirstFrameURL = ""
+	if variant == "i2v" && aliReq.Parameters != nil {
+		aliReq.Parameters.Ratio = ""
+	}
+	return nil
+}
+
+func applyHappyHorseI2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	return applyHappyHorseI2VStyleMedia(req, aliReq, "i2v")
+}
+
+func ensureHappyHorseR2VPrompt(prompt string, imageCount int) string {
+	prompt = strings.TrimSpace(prompt)
+	if imageCount <= 0 {
+		return prompt
+	}
+	if strings.Contains(prompt, "[Image") {
+		return prompt
+	}
+	refs := make([]string, imageCount)
+	for i := range refs {
+		refs[i] = fmt.Sprintf("[Image %d]", i+1)
+	}
+	prefix := strings.Join(refs, "、")
+	if prompt == "" {
+		return prefix
+	}
+	return prefix + " " + prompt
+}
+
+func applyHappyHorseR2VMedia(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	urls := collectImageURLs(req, aliReq)
+	if len(urls) == 0 {
+		urls = mediaURLsFromAliInput(aliReq)
+	}
+	if len(urls) == 0 {
+		return fmt.Errorf("happyhorse r2v requires 1-9 reference images")
+	}
+	aliReq.Input.Media = buildOfficialHappyHorseMedia("r2v", urls, "")
+	aliReq.Input.ImgURL = ""
+	aliReq.Input.FirstFrameURL = ""
+	aliReq.Input.Prompt = ensureHappyHorseR2VPrompt(aliReq.Input.Prompt, len(urls))
+	return nil
+}
+
+func applyHappyHorseR2V(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	return applyHappyHorseR2VMedia(req, aliReq)
+}
+
+func applyHappyHorseVideoEdit(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	videoURL := collectVideoURL(req)
+	if videoURL == "" {
+		return fmt.Errorf("happyhorse video-edit requires metadata.reference_video_url (public HTTP/HTTPS video URL)")
+	}
+	if !isPublicHTTPURL(videoURL) {
+		return fmt.Errorf("happyhorse video-edit requires a public HTTP(S) video URL")
+	}
+	refImages := collectImageURLs(req, aliReq)
+	aliReq.Input.Media = buildOfficialHappyHorseMedia("video-edit", refImages, videoURL)
+	aliReq.Input.ImgURL = ""
+	aliReq.Input.FirstFrameURL = ""
+	if aliReq.Parameters != nil {
+		aliReq.Parameters.Duration = 0
+		if aliReq.Parameters.AudioSetting == "" {
+			aliReq.Parameters.AudioSetting = "auto"
+		}
+	}
+	return nil
+}
+
+// finalizeHappyHorseAliRequest 欢乐马上游请求唯一出口：模型名 + input.media + 参数。
+func finalizeHappyHorseAliRequest(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	if !isHappyHorseTask(req, aliReq.Model) {
+		return nil
+	}
+	if isHappyHorseModel(req.Model) {
+		aliReq.Model = strings.TrimSpace(req.Model)
+	}
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
+	if err := applyHappyHorseMedia(req, aliReq); err != nil {
+		return err
+	}
+	applyHappyHorseDefaultVisuals(aliReq, aliReq.Model)
+	normalizeOfficialHappyHorseParameters(aliReq, variant)
+	if variant != "video-edit" && aliReq.Parameters != nil {
+		aliReq.Parameters.Duration = clampHappyHorseDuration(aliReq.Parameters.Duration)
+	}
+	encoded, err := encodeHappyHorseMediaImagesToBase64(aliReq.Input.Media)
+	if err != nil {
+		return err
+	}
+	aliReq.Input.Media = encoded
+	return assertHappyHorseMediaPresent(req, aliReq)
+}
+
+// marshalAliVideoRequestBody 欢乐马使用显式 JSON 结构，确保 input.media 必定出现在请求体中。
+func marshalAliVideoRequestBody(aliReq *AliVideoRequest, req relaycommon.TaskSubmitReq) ([]byte, error) {
+	if !isHappyHorseTask(req, aliReq.Model) {
+		return common.Marshal(aliReq)
+	}
+	if err := assertHappyHorseMediaPresent(req, aliReq); err != nil {
+		return nil, err
+	}
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
+	input := map[string]interface{}{
+		"prompt": aliReq.Input.Prompt,
+	}
+	// 官方：i2v/r2v/video-edit 必须带 media 数组；t2v 不得带 media 字段（避免 null/空数组触发校验失败）
+	switch variant {
+	case "i2v", "r2v", "video-edit":
+		media := make([]map[string]string, 0, len(aliReq.Input.Media))
+		for _, item := range aliReq.Input.Media {
+			media = append(media, map[string]string{
+				"type": strings.TrimSpace(item.Type),
+				"url":  strings.TrimSpace(item.URL),
+			})
+		}
+		input["media"] = media
+	}
+	payload := map[string]interface{}{
+		"model": aliReq.Model,
+		"input": input,
+	}
+	if params := happyHorseParametersMap(aliReq, req); len(params) > 0 {
+		payload["parameters"] = params
+	}
+	return json.Marshal(payload)
+}
+
+func happyHorseParametersMap(aliReq *AliVideoRequest, req relaycommon.TaskSubmitReq) map[string]interface{} {
+	if aliReq.Parameters == nil {
+		return nil
+	}
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
+	p := aliReq.Parameters
+	out := map[string]interface{}{}
+	if variant != "video-edit" {
+		res := p.Resolution
+		if res == "" {
+			res = "1080P"
+		}
+		out["resolution"] = res
+		dur := p.Duration
+		if dur <= 0 {
+			dur = 5
+		}
+		out["duration"] = dur
+	}
+	// 官方：图生视频不支持 ratio，带上可能导致上游参数异常
+	if p.Ratio != "" && variant != "i2v" && variant != "video-edit" {
+		out["ratio"] = p.Ratio
+	}
+	if p.Seed > 0 {
+		out["seed"] = p.Seed
+	}
+	if p.AudioSetting != "" {
+		out["audio_setting"] = p.AudioSetting
+	}
+	if p.Watermark {
+		out["watermark"] = p.Watermark
+	}
+	return out
+}
+
+func mergeAliVideoMetadata(metadata map[string]interface{}, aliReq *AliVideoRequest, clientModel string) error {
+	if metadata == nil {
+		return nil
+	}
+	if paramsRaw, ok := metadata["parameters"]; ok && paramsRaw != nil {
+		paramsBytes, err := json.Marshal(paramsRaw)
+		if err != nil {
+			return err
+		}
+		var params AliVideoParameters
+		if err := json.Unmarshal(paramsBytes, &params); err != nil {
+			return err
+		}
+		mergeAliVideoParameters(aliReq.Parameters, &params)
+	}
+	if inputRaw, ok := metadata["input"]; ok && inputRaw != nil {
+		inputBytes, err := json.Marshal(inputRaw)
+		if err != nil {
+			return err
+		}
+		var input AliVideoInput
+		if err := json.Unmarshal(inputBytes, &input); err != nil {
+			return err
+		}
+		if strings.TrimSpace(input.Prompt) != "" {
+			aliReq.Input.Prompt = input.Prompt
+		}
+		// 不把 metadata.input.media 原样写入 aliReq：类型可能是 image/image_url，由 applyHappyHorseMedia 统一转为官方类型
+	}
+	mergeFlatVideoMetadata(metadata, aliReq, clientModel)
+	return nil
+}
+
+func assertHappyHorseMediaPresent(req relaycommon.TaskSubmitReq, aliReq *AliVideoRequest) error {
+	variant := happyHorseVariantFromRequest(req, aliReq.Model)
+	switch variant {
+	case "i2v", "r2v", "video-edit":
+		if len(aliReq.Input.Media) == 0 {
+			return fmt.Errorf("happyhorse %s: input.media is required", variant)
+		}
+		for i, item := range aliReq.Input.Media {
+			if strings.TrimSpace(item.Type) == "" || strings.TrimSpace(item.URL) == "" {
+				return fmt.Errorf("happyhorse %s: input.media[%d] missing type or url", variant, i)
+			}
+		}
+	}
+	return nil
+}
+
+func mergeAliVideoParameters(dst *AliVideoParameters, src *AliVideoParameters) {
+	if dst == nil || src == nil {
+		return
+	}
+	if src.Resolution != "" {
+		dst.Resolution = src.Resolution
+		dst.Size = ""
+	}
+	if src.Size != "" {
+		dst.Size = src.Size
+	}
+	if src.Ratio != "" {
+		dst.Ratio = src.Ratio
+	}
+	if src.Duration > 0 {
+		dst.Duration = src.Duration
+	}
+	if src.Seed > 0 {
+		dst.Seed = src.Seed
+	}
+	if src.AudioSetting != "" {
+		dst.AudioSetting = src.AudioSetting
+	}
+	dst.Watermark = src.Watermark
+	if src.PromptExtend {
+		dst.PromptExtend = src.PromptExtend
+	}
+}

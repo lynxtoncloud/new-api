@@ -109,6 +109,9 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
+				// Lynxton: 企业成员可用分组兜底（DI 钩子，未注入则跳过）。
+				// 此处 usingGroup 已含 token / playground 定型，是唯一权威分组，
+				// 故对存量令牌、playground override 等所有路径均生效。
 				if common.OrgMemberGroupGuard != nil {
 					if guardErr := common.OrgMemberGroupGuard(c.GetInt("id"), usingGroup); guardErr != nil {
 						abortWithOpenAiMessage(c, http.StatusForbidden, guardErr.Error())

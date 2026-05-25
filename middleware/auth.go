@@ -494,6 +494,9 @@ func shouldTryTokenQuotaFallback(token *model.Token) bool {
 	if token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusExhausted {
 		return false
 	}
+	if token.SelfSelectable {
+		return false
+	}
 	if token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp() {
 		return false
 	}

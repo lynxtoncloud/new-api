@@ -403,6 +403,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
+	if len(bytes.TrimSpace(responseBody)) == 0 {
+		taskErr = service.TaskErrorWrapper(
+			fmt.Errorf("upstream returned empty body (http %d)", resp.StatusCode),
+			"empty_upstream_response",
+			http.StatusBadGateway,
+		)
+		return
+	}
+
 	// 解析阿里响应
 	var aliResp AliVideoResponse
 	if err := common.Unmarshal(responseBody, &aliResp); err != nil {
@@ -482,6 +491,9 @@ func (a *TaskAdaptor) GetChannelName() string {
 
 // ParseTaskResult 解析任务结果
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	if len(bytes.TrimSpace(respBody)) == 0 {
+		return nil, errors.New("upstream returned empty task result body")
+	}
 	var aliResp AliVideoResponse
 	if err := common.Unmarshal(respBody, &aliResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")

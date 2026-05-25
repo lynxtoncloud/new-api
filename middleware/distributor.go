@@ -33,7 +33,17 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			statusCode := http.StatusBadRequest
+			errMsg := err.Error()
+			if common.IsRequestBodyTooLargeError(err) {
+				statusCode = http.StatusRequestEntityTooLarge
+				limitMB := constant.MaxRequestBodyMB
+				if limitMB <= 0 {
+					limitMB = 128
+				}
+				errMsg = fmt.Sprintf("request body too large (max %d MB)", limitMB)
+			}
+			abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": errMsg}))
 			return
 		}
 		if ok {
@@ -96,6 +106,13 @@ func Distribute() func(c *gin.Context) {
 						}
 						usingGroup = playgroundRequest.Group
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+					}
+				}
+
+				if common.OrgMemberGroupGuard != nil {
+					if guardErr := common.OrgMemberGroupGuard(c.GetInt("id"), usingGroup); guardErr != nil {
+						abortWithOpenAiMessage(c, http.StatusForbidden, guardErr.Error())
+						return
 					}
 				}
 
@@ -173,7 +190,8 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 	var modelRequest ModelRequest
 	err := common.UnmarshalBodyReusable(c, &modelRequest)
 	if err != nil {
-		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		// 由 Distribute() 统一包装 i18n，避免「无效的请求，无效的请求，…」重复前缀
+		return nil, err
 	}
 	return &modelRequest, nil
 }

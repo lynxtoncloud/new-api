@@ -498,6 +498,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 
+	if shouldSettle && task.Status == model.TaskStatusSuccess && common.OnVideoTaskSucceeded != nil {
+		providerURL := strings.TrimSpace(taskResult.Url)
+		if providerURL == "" {
+			providerURL = strings.TrimSpace(task.PrivateData.ResultURL)
+		}
+		common.OnVideoTaskSucceeded(ctx, common.VideoTaskSuccessInfo{
+			TaskID:      task.TaskID,
+			UserID:      task.UserId,
+			Platform:    string(task.Platform),
+			ProviderURL: providerURL,
+		})
+	}
+
 	return nil
 }
 

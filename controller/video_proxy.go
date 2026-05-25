@@ -55,6 +55,18 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	if common.StreamVideoOutput != nil {
+		handled, streamErr := common.StreamVideoOutput(c, taskID, task.UserId)
+		if streamErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("OSS stream failed for task %s: %s", taskID, streamErr.Error()))
+			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to stream video from storage")
+			return
+		}
+		if handled {
+			return
+		}
+	}
+
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get channel for task %s: %s", taskID, err.Error()))

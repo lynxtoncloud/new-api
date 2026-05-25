@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Token struct {
@@ -23,6 +24,8 @@ type Token struct {
 	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
 	UnlimitedQuota     bool           `json:"unlimited_quota"`
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
+	SelfSelectable     bool           `json:"self_selectable"`
+	Default            bool           `json:"default"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
@@ -232,19 +235,37 @@ func GetNextAvailableTokenForUser(userId int, currentTokenId int) (*Token, error
 
 	now := common.GetTimestamp()
 	findCandidates := func(afterCurrent bool) ([]Token, error) {
-		var tokens []Token
-		query := DB.Where("user_id = ? and id <> ? and status = ? and (expired_time = -1 or expired_time > ?)",
-			userId, currentTokenId, common.TokenStatusEnabled, now)
-		if currentTokenId > 0 {
-			if afterCurrent {
-				query = query.Where("id < ?", currentTokenId)
-			} else {
-				query = query.Where("id > ?", currentTokenId)
+		// 每次从 DB 重建，避免在同一 *gorm.DB 上链式 Where/Find 互相污染。
+		base := func() *gorm.DB {
+			q := DB.Where("user_id = ? and id <> ? and status = ? and (expired_time = -1 or expired_time > ?) and self_selectable = ?",
+				userId, currentTokenId, common.TokenStatusEnabled, now, true)
+			if currentTokenId > 0 {
+				if afterCurrent {
+					q = q.Where("id < ?", currentTokenId)
+				} else {
+					q = q.Where("id > ?", currentTokenId)
+				}
 			}
-		} else if !afterCurrent {
-			return tokens, nil
+			return q
 		}
-		err := query.Order("id desc").Find(&tokens).Error
+		if currentTokenId <= 0 && !afterCurrent {
+			return nil, nil
+		}
+
+		var tokens []Token
+		// 优先回退到与当前令牌同分组的候选；同组无候选时再回退到全部分组。
+		if currentTokenId > 0 {
+			var currentToken Token
+			if err := DB.Where("id = ?", currentTokenId).First(&currentToken).Error; err == nil && currentToken.Group != "" {
+				if err := base().Where(commonGroupCol+" = ?", currentToken.Group).Order("id desc").Find(&tokens).Error; err != nil {
+					return nil, err
+				}
+				if len(tokens) > 0 {
+					return tokens, nil
+				}
+			}
+		}
+		err := base().Order("id desc").Find(&tokens).Error
 		return tokens, err
 	}
 
@@ -319,9 +340,20 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 }
 
 func (token *Token) Insert() error {
-	var err error
-	err = DB.Create(token).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if token.Default {
+			if err := lockTokenDefaultOwner(tx, token.UserId); err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(token).Error; err != nil {
+			return err
+		}
+		if token.Default {
+			return clearOtherDefaultTokens(tx, token.UserId, token.Id)
+		}
+		return nil
+	})
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
@@ -336,9 +368,38 @@ func (token *Token) Update() (err error) {
 			})
 		}
 	}()
-	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if token.Default {
+			if err := lockTokenDefaultOwner(tx, token.UserId); err != nil {
+				return err
+			}
+			if err := clearOtherDefaultTokens(tx, token.UserId, token.Id); err != nil {
+				return err
+			}
+		}
+		return tx.Model(token).Select("name", "status", "self_selectable", "default", "expired_time", "remain_quota", "unlimited_quota",
+			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+	})
 	return err
+}
+
+func lockTokenDefaultOwner(tx *gorm.DB, userId int) error {
+	if userId <= 0 {
+		return errors.New("userId 为空！")
+	}
+	var user User
+	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", userId).First(&user).Error
+}
+
+func clearOtherDefaultTokens(tx *gorm.DB, userId int, tokenId int) error {
+	if userId <= 0 {
+		return errors.New("userId 为空！")
+	}
+	query := tx.Model(&Token{}).Where("user_id = ?", userId)
+	if tokenId > 0 {
+		query = query.Where("id <> ?", tokenId)
+	}
+	return query.Update("default", false).Error
 }
 
 func (token *Token) SelectUpdate() (err error) {

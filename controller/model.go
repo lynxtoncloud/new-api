@@ -110,6 +110,11 @@ func init() {
 }
 
 func ListModels(c *gin.Context, modelType int) {
+	if common.ModelListHook != nil {
+		common.ModelListHook(c, modelType)
+		return
+	}
+
 	userOpenAiModels := make([]dto.OpenAIModels, 0)
 
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled

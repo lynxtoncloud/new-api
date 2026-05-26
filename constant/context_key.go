@@ -42,6 +42,17 @@ const (
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
 	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
 
+	/* alias routing keys (Lynxton model-catalog-design.md §7/§13)
+	 *
+	 * 解析阶段（distributor）若识别为 alias，则注入以下 key；下游 RelayInfo / model_mapped / relay 重试
+	 * 按 key 存在与否区分 alias / direct 两条路径。命名与 override 的 "upstream_model" 显式区分，
+	 * 不复用 ContextKeyOriginalModel 以避免与现有计费 / 重试契约耦合。
+	 */
+	ContextKeyAliasOriginModel    ContextKey = "alias_origin_model"     // = 对外 alias model_id，全程不变
+	ContextKeyAliasUpstreamModel  ContextKey = "alias_upstream_model"   // = 当前选中的真实 target_model_id
+	ContextKeyAliasOrderedTargets ContextKey = "alias_ordered_targets"  // []string，第一段排好序的候选游标
+	ContextKeyAliasTargetCursor   ContextKey = "alias_target_cursor"    // int，当前 target 在 ordered list 中的索引
+
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"
 	ContextKeyUserSetting ContextKey = "user_setting"

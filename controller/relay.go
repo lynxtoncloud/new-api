@@ -297,6 +297,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
+	if channel, newAPIError, ok := getAliasRetryChannel(c, info, retryParam); ok {
+		return channel, newAPIError
+	}
+
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
@@ -313,6 +317,64 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+func getAliasRetryChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError, bool) {
+	targets := common.GetContextKeyStringSlice(c, constant.ContextKeyAliasOrderedTargets)
+	if len(targets) == 0 {
+		return nil, nil, false
+	}
+
+	cursor := common.GetContextKeyInt(c, constant.ContextKeyAliasTargetCursor)
+	if cursor < 0 || cursor >= len(targets) {
+		cursor = 0
+	}
+
+	var lastErr error
+	var lastGroup string
+	for i := cursor; i < len(targets); i++ {
+		targetRetry := retryParam.GetRetry()
+		if i != cursor {
+			targetRetry = 0
+		}
+		rp := &service.RetryParam{
+			Ctx:        c,
+			TokenGroup: retryParam.TokenGroup,
+			ModelName:  targets[i],
+			Retry:      common.GetPointer(targetRetry),
+		}
+		channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(rp)
+		lastGroup = selectGroup
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if channel == nil {
+			continue
+		}
+
+		common.SetContextKey(c, constant.ContextKeyAliasUpstreamModel, targets[i])
+		common.SetContextKey(c, constant.ContextKeyAliasTargetCursor, i)
+		if i != cursor {
+			retryParam.SetRetry(0)
+		}
+
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
+		if newAPIError != nil {
+			return nil, newAPIError, true
+		}
+		return channel, nil, true
+	}
+
+	showGroup := lastGroup
+	if showGroup == "" {
+		showGroup = retryParam.TokenGroup
+	}
+	if lastErr != nil {
+		return nil, types.NewError(fmt.Errorf("获取分组 %s 下 alias 模型 %s 的可用渠道失败（retry）: %s", showGroup, info.OriginModelName, lastErr.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry()), true
+	}
+	return nil, types.NewError(fmt.Errorf("分组 %s 下 alias 模型 %s 的可用渠道不存在（retry）", showGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry()), true
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {

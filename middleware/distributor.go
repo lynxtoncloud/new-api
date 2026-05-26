@@ -91,6 +91,29 @@ func Distribute() func(c *gin.Context) {
 				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+
+				// Lynxton alias 解析（DI 钩子，未注入则跳过）。
+				// model-catalog-design.md §7：alias 命中后改走两段式选 channel；
+				// rejectReason != "" 直接拒绝（如 ModelRatio/ModelPrice 未配置，避免免费刷量）。
+				var aliasOrigin string
+				var orderedTargets []string
+				if common.AliasResolver != nil {
+					targets, rejectReason, isAlias := common.AliasResolver(modelRequest.Model)
+					if isAlias {
+						if rejectReason != "" {
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable, rejectReason, types.ErrorCodeModelNotFound)
+							return
+						}
+						if len(targets) == 0 {
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable,
+								i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}),
+								types.ErrorCodeModelNotFound)
+							return
+						}
+						aliasOrigin = modelRequest.Model
+						orderedTargets = targets
+					}
+				}
 				// check path is /pg/chat/completions
 				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 					playgroundRequest := &dto.PlayGroundRequest{}
@@ -119,58 +142,105 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil {
-						if preferred.Status != common.ChannelStatusEnabled {
-							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
-								return
-							}
-						} else if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
+				// 渠道亲和（粘性会话）：alias 路径下用 alias model_id 查 abilities 永远落空，
+				// 直接跳过避免无用查询（model-catalog-design.md §7.4 采纳方案 B：alias 关闭亲和）。
+				if aliasOrigin == "" {
+					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+						preferred, err := model.CacheGetChannel(preferredChannelID)
+						if err == nil && preferred != nil {
+							if preferred.Status != common.ChannelStatusEnabled {
+								if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+									abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+									return
 								}
+							} else if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetUserAutoGroup(userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										selectGroup = g
+										common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+										channel = preferred
+										service.MarkChannelAffinityUsed(c, g, preferred.Id)
+										break
+									}
+								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								channel = preferred
+								selectGroup = usingGroup
+								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
 					}
 				}
 
 				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:        c,
-						ModelName:  modelRequest.Model,
-						TokenGroup: usingGroup,
-						Retry:      common.GetPointer(0),
-					})
-					if err != nil {
-						showGroup := usingGroup
-						if usingGroup == "auto" {
-							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+					if aliasOrigin != "" {
+						// 两段式第二段：逐 target 复用现有缓存选择器，命中第一个有渠道的 target。
+						// 各 target 间分组语义统一沿用 usingGroup（含 "auto" 由 selector 内部展开）。
+						var aliasErr error
+						selectedCursor := -1
+						for i, target := range orderedTargets {
+							rp := &service.RetryParam{
+								Ctx:        c,
+								ModelName:  target,
+								TokenGroup: usingGroup,
+								Retry:      common.GetPointer(0),
+							}
+							ch, sg, perr := service.CacheGetRandomSatisfiedChannel(rp)
+							if perr != nil {
+								aliasErr = perr
+								continue
+							}
+							if ch != nil {
+								channel = ch
+								selectGroup = sg
+								selectedCursor = i
+								common.SetContextKey(c, constant.ContextKeyAliasUpstreamModel, target)
+								break
+							}
 						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
-						// 如果错误，但是渠道不为空，说明是数据库一致性问题
-						//if channel != nil {
-						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
-						//	message = "数据库一致性已被破坏，请联系管理员"
-						//}
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
-						return
-					}
-					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
-						return
+						if channel == nil {
+							showModel := modelRequest.Model
+							if aliasErr != nil {
+								message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": usingGroup, "Model": showModel, "Error": aliasErr.Error()})
+								abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+								return
+							}
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable,
+								i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": showModel}),
+								types.ErrorCodeModelNotFound)
+							return
+						}
+						// 写入 alias 上下文，供 RelayInfo / model_mapped / 重试游标使用。
+						common.SetContextKey(c, constant.ContextKeyAliasOriginModel, aliasOrigin)
+						common.SetContextKey(c, constant.ContextKeyAliasOrderedTargets, orderedTargets)
+						common.SetContextKey(c, constant.ContextKeyAliasTargetCursor, selectedCursor)
+					} else {
+						channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+							Ctx:        c,
+							ModelName:  modelRequest.Model,
+							TokenGroup: usingGroup,
+							Retry:      common.GetPointer(0),
+						})
+						if err != nil {
+							showGroup := usingGroup
+							if usingGroup == "auto" {
+								showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+							}
+							message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+							// 如果错误，但是渠道不为空，说明是数据库一致性问题
+							//if channel != nil {
+							//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
+							//	message = "数据库一致性已被破坏，请联系管理员"
+							//}
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+							return
+						}
+						if channel == nil {
+							abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+							return
+						}
 					}
 				}
 			}

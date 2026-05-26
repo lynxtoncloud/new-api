@@ -174,6 +174,18 @@ type RelayInfo struct {
 	*TaskRelayInfo
 }
 
+// resolveUpstreamModelName 根据 context 决定 UpstreamModelName 来源：
+//   - alias 路由：取 ContextKeyAliasUpstreamModel（distributor 设的真实 target）。
+//   - direct  路径：回退 ContextKeyOriginalModel（用户请求 model_id，行为不变）。
+//
+// model-catalog-design.md §13。
+func resolveUpstreamModelName(c *gin.Context) string {
+	if v := common.GetContextKeyString(c, constant.ContextKeyAliasUpstreamModel); v != "" {
+		return v
+	}
+	return common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+}
+
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
@@ -192,7 +204,10 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		ChannelCreateTime:    c.GetInt64("channel_create_time"),
 		ParamOverride:        paramOverride,
 		HeadersOverride:      headerOverride,
-		UpstreamModelName:    common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
+		// alias 路由：UpstreamModelName 优先取 ContextKeyAliasUpstreamModel（被 distributor 设为选中的真实 target）。
+		// direct 路径下该 key 为空，回退到 ContextKeyOriginalModel（= 用户请求 model_id）。
+		// 设计：model-catalog-design.md §13。
+		UpstreamModelName:    resolveUpstreamModelName(c),
 		IsModelMapped:        false,
 		SupportStreamOptions: false,
 	}

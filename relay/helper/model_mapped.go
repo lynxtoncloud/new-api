@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -18,10 +19,18 @@ func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Reque
 		info.ChannelMeta = &common.ChannelMeta{}
 	}
 
+	// alias 路由（Lynxton model-catalog-design.md §7.6 / §7.8）：
+	//   - 渠道级 model_mapping 必须从真实 target（UpstreamModelName）起算，不能用 OriginModelName(=alias)；
+	//   - responses-compact 路径下禁止用上游名反推覆写 OriginModelName，否则计费 / 日志会回退成真实 target。
+	isAliasRouted := c.GetString(string(constant.ContextKeyAliasOriginModel)) != ""
+
 	isResponsesCompact := info.RelayMode == relayconstant.RelayModeResponsesCompact
 	originModelName := info.OriginModelName
 	mappingModelName := originModelName
-	if isResponsesCompact && strings.HasSuffix(originModelName, ratio_setting.CompactModelSuffix) {
+	if isAliasRouted && info.UpstreamModelName != "" {
+		// alias 路由：mapping 链从真实 target 起算
+		mappingModelName = info.UpstreamModelName
+	} else if isResponsesCompact && strings.HasSuffix(originModelName, ratio_setting.CompactModelSuffix) {
 		mappingModelName = strings.TrimSuffix(originModelName, ratio_setting.CompactModelSuffix)
 	}
 
@@ -66,7 +75,9 @@ func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Reque
 		}
 	}
 
-	if isResponsesCompact {
+	if isResponsesCompact && !isAliasRouted {
+		// 仅 direct 路径保留旧行为：用最终上游名反推覆写 OriginModelName（带 compact 后缀）。
+		// alias 路径下跳过：OriginModelName 必须始终保持为 alias，计费 / 日志才能维持产品口径。
 		finalUpstreamModelName := mappingModelName
 		if info.IsModelMapped && info.UpstreamModelName != "" {
 			finalUpstreamModelName = info.UpstreamModelName

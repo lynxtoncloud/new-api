@@ -68,6 +68,14 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+func normalizeChannelBaseURL(channel *model.Channel) {
+	if channel == nil || channel.BaseURL == nil {
+		return
+	}
+	normalized := strings.TrimRight(strings.TrimSpace(*channel.BaseURL), "/")
+	channel.BaseURL = &normalized
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -403,7 +411,7 @@ func GetChannelKey(c *gin.Context) {
 	}
 
 	// 记录操作日志
-	model.RecordLog(userId, model.LogTypeSystem, fmt.Sprintf("查看渠道密钥信息 (渠道ID: %d)", channelId))
+	model.RecordLog(userId, model.LogTypeSystem, fmt.Sprintf("查看渠道密钥信息 (渠道ID: %d)", channelId), 0)
 
 	// 返回渠道密钥
 	c.JSON(http.StatusOK, gin.H{
@@ -570,6 +578,7 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	normalizeChannelBaseURL(addChannelRequest.Channel)
 
 	// 使用统一的校验函数
 	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
@@ -846,6 +855,7 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	normalizeChannelBaseURL(&channel.Channel)
 
 	// 使用统一的校验函数
 	if err := validateChannel(&channel.Channel, false); err != nil {

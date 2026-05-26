@@ -177,7 +177,7 @@ func AddToken(c *gin.Context) {
 	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
-		if token.RemainQuota <= 0 {
+		if token.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
 			return
 		}
@@ -201,6 +201,20 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
+	// Lynxton: 企业成员只能创建落在其可用分组内的令牌（DI 钩子，未注入则跳过）。
+	if common.OrgMemberGroupGuard != nil && token.Group != "" {
+		if guardErr := common.OrgMemberGroupGuard(c.GetInt("id"), token.Group); guardErr != nil {
+			common.ApiError(c, guardErr)
+			return
+		}
+	}
+	// Lynxton: 目标分组必须对用户可选且优先级未越权（DI 钩子，未注入则跳过）。
+	if common.TokenGroupSelectableGuard != nil && token.Group != "" {
+		if guardErr := common.TokenGroupSelectableGuard(c.GetInt("id"), token.Group); guardErr != nil {
+			common.ApiError(c, guardErr)
+			return
+		}
+	}
 	key, err := common.GenerateKey()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
@@ -217,6 +231,8 @@ func AddToken(c *gin.Context) {
 		RemainQuota:        token.RemainQuota,
 		UnlimitedQuota:     token.UnlimitedQuota,
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
+		SelfSelectable:     token.SelfSelectable,
+		Default:            token.Default,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
@@ -261,13 +277,27 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	if !token.UnlimitedQuota {
-		if token.RemainQuota <= 0 {
+		if token.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
 			return
 		}
 		maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
 		if token.RemainQuota > maxQuotaValue {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+			return
+		}
+	}
+	// Lynxton: 编辑令牌时同样校验目标分组在企业可用分组内（status_only 切换不涉及分组，跳过）。
+	if statusOnly == "" && common.OrgMemberGroupGuard != nil && token.Group != "" {
+		if guardErr := common.OrgMemberGroupGuard(userId, token.Group); guardErr != nil {
+			common.ApiError(c, guardErr)
+			return
+		}
+	}
+	// Lynxton: 编辑令牌时同样校验目标分组对用户可选且优先级未越权。
+	if statusOnly == "" && common.TokenGroupSelectableGuard != nil && token.Group != "" {
+		if guardErr := common.TokenGroupSelectableGuard(userId, token.Group); guardErr != nil {
+			common.ApiError(c, guardErr)
 			return
 		}
 	}
@@ -297,6 +327,8 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
+		cleanToken.SelfSelectable = token.SelfSelectable
+		cleanToken.Default = token.Default
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 	}

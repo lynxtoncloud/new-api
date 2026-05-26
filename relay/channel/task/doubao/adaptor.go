@@ -134,18 +134,46 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling 检测请求 metadata，返回分辨率倍率和视频输入折扣等 OtherRatio。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
-			return map[string]float64{"video_input": ratio}
+	ratios := make(map[string]float64)
+
+	// 1. 分辨率倍率
+	if res, ok := resolveResolution(req.Metadata, req.Size); ok {
+		if ratio, ok := GetResolutionRatio(info.OriginModelName, res); ok && ratio != 1.0 {
+			ratios[fmt.Sprintf("resolution-%s", res)] = ratio
 		}
 	}
-	return nil
+
+	// 2. 视频输入折扣
+	if hasVideoInMetadata(req.Metadata) {
+		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
+			ratios["video_input"] = ratio
+		}
+	}
+
+	if len(ratios) == 0 {
+		return nil
+	}
+	return ratios
+}
+
+// resolveResolution 从 metadata 或 size 中提取分辨率字符串。
+// 返回值如 "720P"、"1080P"；第二个返回值表示是否找到有效分辨率。
+func resolveResolution(metadata map[string]interface{}, size string) (string, bool) {
+	if metadata != nil {
+		if r, ok := metadata["resolution"].(string); ok && r != "" {
+			return r, true
+		}
+	}
+	if size != "" {
+		return size, true
+	}
+	return "", false
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，

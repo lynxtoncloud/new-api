@@ -498,6 +498,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 
+	if shouldSettle && task.Status == model.TaskStatusSuccess && common.OnVideoTaskSucceeded != nil {
+		providerURL := strings.TrimSpace(taskResult.Url)
+		if providerURL == "" {
+			providerURL = strings.TrimSpace(task.PrivateData.ResultURL)
+		}
+		common.OnVideoTaskSucceeded(ctx, common.VideoTaskSuccessInfo{
+			TaskID:      task.TaskID,
+			UserID:      task.UserId,
+			Platform:    string(task.Platform),
+			ProviderURL: providerURL,
+		})
+	}
+
 	return nil
 }
 
@@ -548,7 +561,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整", -1)
 		return
 	}
 	// 2. 回退到 token 重算

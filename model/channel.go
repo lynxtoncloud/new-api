@@ -306,11 +306,11 @@ func SearchChannels(keyword string, group string, model string, idSort bool) ([]
 		modelsCol = `"models"`
 	}
 
-	baseURLCol := "`base_url`"
+	/*baseURLCol := "`base_url`"
 	// 如果是 PostgreSQL，使用双引号
 	if common.UsingPostgreSQL {
 		baseURLCol = `"base_url"`
-	}
+	}*/
 
 	order := "priority desc"
 	if idSort {
@@ -331,11 +331,11 @@ func SearchChannels(keyword string, group string, model string, idSort bool) ([]
 			// sqlite, PostgreSQL
 			groupCondition = `(',' || ` + commonGroupCol + ` || ',') LIKE ?`
 		}
-		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
+		whereClause = "name LIKE ? AND " + modelsCol + ` LIKE ? AND ` + groupCondition
+		args = append(args, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
 	} else {
-		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%")
+		whereClause = "name LIKE ? AND " + modelsCol + " LIKE ?"
+		args = append(args, "%"+keyword+"%", "%"+model+"%")
 	}
 
 	// 执行查询
@@ -801,11 +801,11 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 		modelsCol = `"models"`
 	}
 
-	baseURLCol := "`base_url`"
+	/*baseURLCol := "`base_url`"
 	// 如果是 PostgreSQL，使用双引号
 	if common.UsingPostgreSQL {
 		baseURLCol = `"base_url"`
-	}
+	}*/
 
 	order := "priority desc"
 	if idSort {
@@ -826,11 +826,11 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 			// sqlite, PostgreSQL
 			groupCondition = `(',' || ` + commonGroupCol + ` || ',') LIKE ?`
 		}
-		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
+		whereClause = "name LIKE ? AND " + modelsCol + ` LIKE ? AND ` + groupCondition
+		args = append(args, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
 	} else {
-		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%")
+		whereClause = "name LIKE ? AND " + modelsCol + " LIKE ?"
+		args = append(args, "%"+keyword+"%", "%"+model+"%")
 	}
 
 	subQuery := baseQuery.Where(whereClause, args...).
